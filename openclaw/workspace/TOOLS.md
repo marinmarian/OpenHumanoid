@@ -29,6 +29,12 @@ Things like:
 
 - Preferred voice: "Nova" (warm, slightly British)
 - Default speaker: Kitchen HomePod
+
+### Personality Delivery
+
+- Spoken style: Cool, composed, lightly teasing
+- Safety tone: Short, clear, serious
+- Low-stakes tone: Dry humor is welcome, but keep it sparse
 ```
 
 ## Why Separate?
