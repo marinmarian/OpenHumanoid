@@ -6,10 +6,12 @@ Voice-controlled humanoid robot integrating **OpenClaw**, **SLAM/LiDAR Navigatio
 
 Two switchable voice-control modes, both sharing a single HTTP bridge to the robot:
 
-| Mode | Latency | Input | Capabilities |
-|------|---------|-------|--------------|
-| **Fast** (`VOICE_MODE=realtime`) | ~500ms | Voice (Realtime API) | Locomotion: walk, turn, stop, distance/timed/sequential commands |
-| **Full** (`VOICE_MODE=openclaw`) | ~2-5s | Voice + Text + WhatsApp (OpenClaw) | Full orchestration + future Navigation/VLA |
+
+| Mode                             | Latency | Input                              | Capabilities                                                     |
+| -------------------------------- | ------- | ---------------------------------- | ---------------------------------------------------------------- |
+| **Fast** (`VOICE_MODE=realtime`) | ~500ms  | Voice (Realtime API)               | Locomotion: walk, turn, stop, distance/timed/sequential commands |
+| **Full** (`VOICE_MODE=openclaw`) | ~2-5s   | Voice + Text + WhatsApp (OpenClaw) | Full orchestration + future Navigation/VLA                       |
+
 
 See [docs/architecture.md](docs/architecture.md) for the full architecture and data flow.
 
@@ -59,13 +61,41 @@ cd GR00T-WholeBodyControl/decoupled_wbc
 # Simulation (MuJoCo)
 ./scripts/start_bridge.sh
 
-# Real robot (host IP must be 192.168.123.222)
+# Real robot
 ./scripts/start_bridge.sh real
 ```
 
 Verify: `curl http://localhost:8765/status`
 
+Kill bridge: `docker exec decoupled_wbc-bash-root pkill -9 -f run_with_bridge.py`
+
 > **Without Docker/robot:** Run `uv run python bridge/mock_bridge.py` instead. Same API, prints to console.
+
+#### Real robot prerequisites
+
+Before `start_bridge.sh real` will work, the host ethernet NIC must have an IPv4 address on the robot subnet. CycloneDDS (used by the Unitree SDK) ignores interfaces without an IP.
+
+```bash
+# 1. Assign IP to the robot NIC (one-time per boot)
+sudo ip addr add 192.168.123.222/24 dev enp0s31f6
+
+# 2. Allow DDS multicast traffic through the firewall
+sudo ufw allow in on enp0s31f6
+
+# 3. Put the robot in damping mode (L2+B on controller) before launching
+```
+
+**Different laptop?** You may need to change the NIC name. Find yours with:
+
+```bash
+ip link show          # look for the wired ethernet interface
+```
+
+Then either set it inline or export it:
+
+```bash
+ROBOT_NIC=eth0 ./scripts/start_bridge.sh real
+```
 
 ### 5. Run a voice mode
 
@@ -76,6 +106,7 @@ uv run python -m realtime.main
 ```
 
 Voice commands:
+
 - "get ready" / "stand up" — activate robot (required first)
 - "walk forward" — continuous until "stop"
 - "walk forward slowly" / "walk forward fast" — speed control
@@ -96,14 +127,16 @@ Open [http://127.0.0.1:18789](http://127.0.0.1:18789) for WebChat, or use Talk M
 
 ## Bridge HTTP API
 
-| Method | Endpoint | Body | Description |
-|--------|----------|------|-------------|
-| POST | `/move` | `{"vx": 0.4, "vy": 0.0, "vyaw": 0.0}` | Set velocity (translated to key presses, step=0.2) |
-| POST | `/stop` | — | Zero all velocities (key `z`) |
-| POST | `/activate` | — | Activate walking policy (key `]`) |
-| POST | `/deactivate` | — | Deactivate policy (key `o`) |
-| POST | `/key` | `{"key": "9"}` | Publish arbitrary key (e.g. `9` = release/hold) |
-| GET | `/status` | — | Current velocity and step size |
+
+| Method | Endpoint      | Body                                  | Description                                        |
+| ------ | ------------- | ------------------------------------- | -------------------------------------------------- |
+| POST   | `/move`       | `{"vx": 0.4, "vy": 0.0, "vyaw": 0.0}` | Set velocity (translated to key presses, step=0.2) |
+| POST   | `/stop`       | —                                     | Zero all velocities (key `z`)                      |
+| POST   | `/activate`   | —                                     | Activate walking policy (key `]`)                  |
+| POST   | `/deactivate` | —                                     | Deactivate policy (key `o`)                        |
+| POST   | `/key`        | `{"key": "9"}`                        | Publish arbitrary key (e.g. `9` = release/hold)    |
+| GET    | `/status`     | —                                     | Current velocity and step size                     |
+
 
 Speed reference: slow=0.2, medium=0.4, fast=0.6 m/s (1/2/3 key presses).
 
@@ -121,11 +154,13 @@ curl -X POST http://localhost:8765/stop
 
 ## Planning
 
-| Task | Scope | Description |
-|------|-------|-------------|
-| **Task 1 — OpenClaw + WBC** | MVP | Voice → locomotion pipeline via shared bridge |
-| **Task 2 — SLAM/LiDAR Navigation** | Tier 2 | Autonomous navigation with obstacle avoidance |
+
+| Task                                | Scope  | Description                                         |
+| ----------------------------------- | ------ | --------------------------------------------------- |
+| **Task 1 — OpenClaw + WBC**         | MVP    | Voice → locomotion pipeline via shared bridge       |
+| **Task 2 — SLAM/LiDAR Navigation**  | Tier 2 | Autonomous navigation with obstacle avoidance       |
 | **Task 3 — VLA + Navigation + WBC** | Tier 3 | Full loco-manipulation with vision-language actions |
+
 
 **Future: GEAR-SONIC integration** — The repo includes NVIDIA's GEAR-SONIC kinematic planner (`gear_sonic_deploy/`) with 27 motion modes (walk, run, squat, crawl, box, dance, zombie walk, etc.). This C++/TensorRT stack accepts commands via ZMQ and could replace or complement the Decoupled WBC for expressive locomotion demos.
 
