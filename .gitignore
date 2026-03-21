@@ -26,7 +26,6 @@ Thumbs.db
 *.onnx
 *.ckpt
 *.safetensors
-data/
 outputs/
 logs/
 wandb/

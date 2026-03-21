@@ -79,7 +79,28 @@ RUN cd /root/ws_loc && \
     source /root/ws_livox/install/setup.bash && \
     colcon build --symlink-install
 
-# ---- 8. Entrypoint -----------------------------------------
+# ---- 8. Disable DDS shared-memory (broken inside Docker on macOS) ---
+RUN printf '<?xml version="1.0" encoding="UTF-8" ?>\n\
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">\n\
+  <transport_descriptors>\n\
+    <transport_descriptor>\n\
+      <transport_id>udp_transport</transport_id>\n\
+      <type>UDPv4</type>\n\
+    </transport_descriptor>\n\
+  </transport_descriptors>\n\
+  <participant profile_name="participant_profile" is_default_profile="true">\n\
+    <rtps>\n\
+      <userTransports>\n\
+        <transport_id>udp_transport</transport_id>\n\
+      </userTransports>\n\
+      <useBuiltinTransports>false</useBuiltinTransports>\n\
+    </rtps>\n\
+  </participant>\n\
+</profiles>\n' > /fastdds_no_shm.xml
+
+ENV FASTRTPS_DEFAULT_PROFILES_FILE=/fastdds_no_shm.xml
+
+# ---- 9. Entrypoint -----------------------------------------
 # Build LD_PRELOAD shim so livox SDK can bind to 0.0.0.0 inside Docker
 # while advertising the real host IP to the LiDAR
 RUN gcc -shared -fPIC -o /usr/lib/bind_any.so /bind_any.c -ldl
