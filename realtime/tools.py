@@ -12,9 +12,9 @@ SPEED_MAP = {
 }
 
 ACTUAL_SPEED = {
-    "slow": 0.15,
-    "medium": 0.30,
-    "fast": 0.45,
+    "slow": 0.18,
+    "medium": 0.35,
+    "fast": 0.50,
 }
 
 ACTUAL_YAW_SPEED = {
