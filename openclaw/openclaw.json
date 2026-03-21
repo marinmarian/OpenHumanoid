@@ -1,0 +1,27 @@
+{
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "openai/gpt-4.1"
+      },
+      "workspace": "./workspace"
+    }
+  },
+  "tools": {
+    "exec": {
+      "host": "gateway",
+      "security": "full",
+      "ask": "off"
+    }
+  },
+  "messages": {
+    "tts": {
+      "auto": "always",
+      "provider": "openai",
+      "openai": {
+        "model": "tts-1",
+        "voice": "alloy"
+      }
+    }
+  }
+}

@@ -31,8 +31,10 @@ outputs/
 logs/
 wandb/
 
+# External repos (cloned locally)
+GR00T-WholeBodyControl/
+
 # Env / secrets
 .env
-.env.*
 credentials.json
 .cursorignore
