@@ -21,15 +21,15 @@ if [ -f "$OPENCLAW_DIR/openclaw.json" ] && [ ! -L "$OPENCLAW_DIR/openclaw.json" 
     echo "Backing up existing openclaw.json → openclaw.json.bak"
     mv "$OPENCLAW_DIR/openclaw.json" "$OPENCLAW_DIR/openclaw.json.bak"
 fi
-ln -sf "$SCRIPT_DIR/openclaw.json" "$OPENCLAW_DIR/openclaw.json"
+ln -sfn "$SCRIPT_DIR/openclaw.json" "$OPENCLAW_DIR/openclaw.json"
 echo "Linked config: $OPENCLAW_DIR/openclaw.json → $SCRIPT_DIR/openclaw.json"
 
-# 3. Symlink workspace
+# 3. Symlink workspace (-n prevents following existing symlink into directory)
 if [ -d "$OPENCLAW_DIR/workspace" ] && [ ! -L "$OPENCLAW_DIR/workspace" ]; then
     echo "Backing up existing workspace → workspace.bak"
     mv "$OPENCLAW_DIR/workspace" "$OPENCLAW_DIR/workspace.bak"
 fi
-ln -sf "$SCRIPT_DIR/workspace" "$OPENCLAW_DIR/workspace"
+ln -sfn "$SCRIPT_DIR/workspace" "$OPENCLAW_DIR/workspace"
 echo "Linked workspace: $OPENCLAW_DIR/workspace → $SCRIPT_DIR/workspace"
 
 echo ""

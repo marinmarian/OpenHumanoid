@@ -27,7 +27,7 @@ else
     echo "WARNING: Bridge not reachable at $BRIDGE_URL"
     echo "Start it first:"
     echo "  Mock:   uv run python bridge/mock_bridge.py"
-    echo '  Docker: docker exec <container> bash -c "source /opt/ros/humble/setup.bash && python3 /tmp/bridge_server.py"'
+    echo "  Docker: ./scripts/start_bridge.sh"
     echo ""
     read -p "Continue anyway? [y/N] " -n 1 -r
     echo

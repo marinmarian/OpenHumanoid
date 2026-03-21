@@ -6,10 +6,12 @@ Voice-controlled humanoid robot integrating **OpenClaw**, **DiMOS**, and **GR00T
 
 Two switchable voice-control modes, both sharing a single HTTP bridge to the robot:
 
-| Mode | Latency | Input | Capabilities |
-|------|---------|-------|-------------|
-| **Fast** (`VOICE_MODE=realtime`) | ~500ms | Voice (Realtime API) | Locomotion: walk, turn, stop, distance/timed/sequential commands |
-| **Full** (`VOICE_MODE=openclaw`) | ~2-5s | Voice + Text (OpenClaw) | Full orchestration + future DiMOS/VLA |
+
+| Mode                             | Latency | Input                   | Capabilities                                                     |
+| -------------------------------- | ------- | ----------------------- | ---------------------------------------------------------------- |
+| **Fast** (`VOICE_MODE=realtime`) | ~500ms  | Voice (Realtime API)    | Locomotion: walk, turn, stop, distance/timed/sequential commands |
+| **Full** (`VOICE_MODE=openclaw`) | ~2-5s   | Voice + Text (OpenClaw) | Full orchestration + future DiMOS/VLA                            |
+
 
 See [docs/architecture.md](docs/architecture.md) for the full architecture and data flow.
 
@@ -81,58 +83,21 @@ cd GR00T-WholeBodyControl/decoupled_wbc
 >
 > The container is named `decoupled_wbc-bash-root` by default.
 
-**3c. Launch control loop + bridge** (single command):
-
-The bridge and control loop run in the **same process** to avoid CycloneDDS networking issues in Docker. Copy the launcher and start it:
+**3c. Launch control loop + bridge:**
 
 ```bash
-# From your host machine (from the OpenHumanoid repo root)
-export WBC_CONTAINER=decoupled_wbc-bash-root
-docker cp bridge/run_with_bridge.py $WBC_CONTAINER:/tmp/run_with_bridge.py
+# From the OpenHumanoid repo root -- simulation
+./scripts/start_bridge.sh
+
+# Or for the real robot (host IP must be 192.168.123.222)
+./scripts/start_bridge.sh real
 ```
 
-For simulation:
+You should see `[BRIDGE] HTTP server listening on 0.0.0.0:8765` followed by control loop output.
 
-```bash
-export WBC_CONTAINER=decoupled_wbc-bash-root
-docker exec $WBC_CONTAINER bash -c "source /opt/ros/humble/setup.bash && source /root/venv/bin/activate && python3 /tmp/run_with_bridge.py --port 8765"
-```
+Verify from another terminal: `curl http://localhost:8765/status`
 
-For the real robot (host machine must have static IP `192.168.123.222`, subnet `255.255.255.0`):
-
-```bash
-export WBC_CONTAINER=decoupled_wbc-bash-root
-docker exec $WBC_CONTAINER bash -c "source /opt/ros/humble/setup.bash && source /root/venv/bin/activate && python3 /tmp/run_with_bridge.py --port 8765 -- --interface real"
-```
-
-You should see:
-
-```
-[BRIDGE] ROS2 publisher ready on /keyboard_input
-[BRIDGE] HTTP server listening on 0.0.0.0:8765
-[BRIDGE] Launching control loop with args: [...]
-```
-
-> The launcher automatically adds `--keyboard-dispatcher-type ros` so the control loop receives commands via ROS2 topics from the bridge. Everything runs in one process -- no DDS inter-process networking needed.
-
-Verify from the host:
-
-```bash
-curl http://localhost:8765/status
-# Should return: {"ok": true, "last_cmd": {"vx": 0.0, "vy": 0.0, "vyaw": 0.0}, ...}
-```
-
-If you need to restart (e.g. after updating the script):
-
-```bash
-docker exec decoupled_wbc-bash-root pkill -9 -f run_with_bridge.py
-```
-
-> **Without the robot (mock mode):** Skip step 3 entirely and run the mock bridge on your host instead:
-> ```bash
-> uv run python bridge/mock_bridge.py
-> ```
-> Same HTTP API, prints commands to console. Everything else works the same.
+> **Without the robot (mock mode):** Skip step 3 entirely and run `uv run python bridge/mock_bridge.py` instead. Same HTTP API, prints to console.
 
 ### Step 4: Run a voice mode
 
@@ -143,6 +108,7 @@ uv run python -m realtime.main
 ```
 
 Speak commands like:
+
 - "get ready" / "stand up" -- activates the robot (required before moving)
 - "walk forward" -- continuous until you say "stop"
 - "turn left slowly" -- qualitative speed control
@@ -163,7 +129,7 @@ cd openclaw && bash setup.sh && cd ..
 openclaw gateway start
 ```
 
-Then open http://127.0.0.1:18789 for WebChat, or use Talk Mode for voice input/output. OpenClaw processes commands through the `robot_control` skill, which sends curl requests to the bridge.
+Then open [http://127.0.0.1:18789](http://127.0.0.1:18789) for WebChat, or use Talk Mode for voice input/output. OpenClaw processes commands through the `robot_control` skill, which sends curl requests to the bridge.
 
 ### Testing the pipeline
 
@@ -188,25 +154,29 @@ curl -X POST http://localhost:8765/stop
 
 ### Bridge HTTP API reference
 
-| Method | Endpoint | Body | Description |
-|--------|----------|------|-------------|
-| POST | `/move` | `{"vx": 0.4, "vy": 0.0, "vyaw": 0.0}` | Set velocity (translated to key presses, step=0.2) |
-| POST | `/stop` | (none) | Zero all velocities (key `z`) |
-| POST | `/activate` | (none) | Activate walking policy (key `]`) |
-| POST | `/deactivate` | (none) | Deactivate policy (key `o`) |
-| POST | `/key` | `{"key": "w"}` | Publish arbitrary keyboard key |
-| GET | `/status` | -- | Current velocity, step size |
+
+| Method | Endpoint      | Body                                  | Description                                        |
+| ------ | ------------- | ------------------------------------- | -------------------------------------------------- |
+| POST   | `/move`       | `{"vx": 0.4, "vy": 0.0, "vyaw": 0.0}` | Set velocity (translated to key presses, step=0.2) |
+| POST   | `/stop`       | (none)                                | Zero all velocities (key `z`)                      |
+| POST   | `/activate`   | (none)                                | Activate walking policy (key `]`)                  |
+| POST   | `/deactivate` | (none)                                | Deactivate policy (key `o`)                        |
+| POST   | `/key`        | `{"key": "w"}`                        | Publish arbitrary keyboard key                     |
+| GET    | `/status`     | --                                    | Current velocity, step size                        |
+
 
 ## Planning
 
-![Task dependency graph](docs/planning.png)
+Task dependency graph
 
-| Task | Scope | Description |
-|------|-------|-------------|
-| **Task 1 — OpenClaw + WBC** | MVP | Voice → locomotion pipeline via shared bridge |
-| **Task 2 — VLA Pipeline** | Tier 2 | GR00T inference pipeline |
-| **Task 3 — DiMOS + WBC** | Tier 2 | Navigation stack → locomotion |
-| **Task 4 — DiMOS + WBC + VLA** | Tier 3 | Full loco-manipulation |
+
+| Task                           | Scope  | Description                                   |
+| ------------------------------ | ------ | --------------------------------------------- |
+| **Task 1 — OpenClaw + WBC**    | MVP    | Voice → locomotion pipeline via shared bridge |
+| **Task 2 — VLA Pipeline**      | Tier 2 | GR00T inference pipeline                      |
+| **Task 3 — DiMOS + WBC**       | Tier 2 | Navigation stack → locomotion                 |
+| **Task 4 — DiMOS + WBC + VLA** | Tier 3 | Full loco-manipulation                        |
+
 
 ## Project Structure
 

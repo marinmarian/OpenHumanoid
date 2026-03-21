@@ -1,10 +1,17 @@
 {
+  "env": {
+    "shellEnv": { "enabled": true }
+  },
+  "gateway": {
+    "mode": "local",
+    "auth": { "mode": "none" }
+  },
   "agents": {
     "defaults": {
       "model": {
         "primary": "openai/gpt-4.1"
       },
-      "workspace": "./workspace"
+      "workspace": "~/.openclaw/workspace"
     }
   },
   "tools": {
@@ -12,6 +19,12 @@
       "host": "gateway",
       "security": "full",
       "ask": "off"
+    }
+  },
+  "channels": {
+    "whatsapp": {
+      "dmPolicy": "pairing",
+      "allowFrom": ["*"]
     }
   },
   "messages": {
