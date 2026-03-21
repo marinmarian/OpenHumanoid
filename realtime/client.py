@@ -14,7 +14,8 @@ import logging
 import websockets
 import requests
 
-from .tools import TOOL_DEFINITIONS, SYSTEM_INSTRUCTIONS, SPEED_MAP, resolve_move, resolve_turn
+import math
+from .tools import TOOL_DEFINITIONS, SYSTEM_INSTRUCTIONS, SPEED_MAP, ACTUAL_SPEED, ACTUAL_YAW_SPEED, resolve_move, resolve_turn
 from .audio import AudioInput, AudioOutput
 
 logger = logging.getLogger(__name__)
@@ -82,7 +83,7 @@ class RealtimeClient:
                         "format": {"type": "audio/pcm", "rate": 24000},
                         "turn_detection": {
                             "type": "server_vad",
-                            "threshold": 0.7,
+                            "threshold": 0.9,
                             "prefix_padding_ms": 300,
                             "silence_duration_ms": 500,
                         },
@@ -197,12 +198,27 @@ class RealtimeClient:
         except asyncio.TimeoutError:
             return False
 
+    def _resolve_turn_duration(self, args: dict) -> float | None:
+        """Get turn duration from explicit seconds or by computing from angle."""
+        if args.get("duration_seconds") is not None:
+            return float(args["duration_seconds"])
+        if args.get("angle_degrees") is not None:
+            radians = math.radians(float(args["angle_degrees"]))
+            yaw_speed = ACTUAL_YAW_SPEED.get(args.get("speed", "medium"), 0.20)
+            return radians / yaw_speed
+        return None
+
     def _resolve_duration(self, args: dict) -> float | None:
-        """Get duration from explicit seconds or by computing from distance/speed."""
+        """Get duration from explicit seconds or by computing from distance/speed.
+
+        For distance commands, uses ACTUAL_SPEED (calibrated tracking speeds)
+        rather than SPEED_MAP (commanded velocities) so that "walk 1 meter"
+        produces roughly 1 meter of real movement.
+        """
         if args.get("duration_seconds") is not None:
             return float(args["duration_seconds"])
         if args.get("distance_meters") is not None:
-            speed = SPEED_MAP.get(args.get("speed", "medium"), 0.3)
+            speed = ACTUAL_SPEED.get(args.get("speed", "medium"), 0.25)
             return float(args["distance_meters"]) / speed
         return None
 
@@ -228,14 +244,30 @@ class RealtimeClient:
                 )
                 return resp.json(), None
 
+            elif name == "activate_robot":
+                resp = await loop.run_in_executor(
+                    None,
+                    lambda: requests.post(f"{self.bridge_url}/activate", json={}, timeout=2),
+                )
+                logger.info("ACTIVATE policy")
+                return resp.json(), None
+
+            elif name == "release_robot":
+                resp = await loop.run_in_executor(
+                    None,
+                    lambda: requests.post(f"{self.bridge_url}/key", json={"key": "9"}, timeout=2),
+                )
+                logger.info("RELEASE/HOLD toggle (key 9)")
+                return resp.json(), None
+
             elif name == "turn_robot":
                 payload = resolve_turn(args.get("direction", "left"), args.get("speed", "medium"))
                 resp = await loop.run_in_executor(
                     None,
                     lambda: requests.post(f"{self.bridge_url}/move", json=payload, timeout=2),
                 )
-                duration = self._resolve_duration(args)
-                logger.info(f"TURN {payload} duration={duration}")
+                duration = self._resolve_turn_duration(args)
+                logger.info(f"TURN {payload} duration={duration} angle={args.get('angle_degrees')}")
                 return resp.json(), duration
 
             else:

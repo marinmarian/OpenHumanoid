@@ -6,9 +6,21 @@ The model maps qualitative speed terms to numeric velocities.
 """
 
 SPEED_MAP = {
+    "slow": 0.2,
+    "medium": 0.4,
+    "fast": 0.6,
+}
+
+ACTUAL_SPEED = {
     "slow": 0.15,
-    "medium": 0.3,
+    "medium": 0.30,
     "fast": 0.45,
+}
+
+ACTUAL_YAW_SPEED = {
+    "slow": 0.20,
+    "medium": 0.40,
+    "fast": 0.55,
 }
 
 DIRECTION_MAP = {
@@ -70,8 +82,41 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "name": "activate_robot",
+        "description": (
+            "Activate the robot's walking policy so it can move. "
+            "Use when the user says 'get ready', 'stand up', 'activate', 'wake up', or similar. "
+            "Must be called before any movement commands will work."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "type": "function",
+        "name": "release_robot",
+        "description": (
+            "Toggle the robot between released (limp) and held (standing) states. "
+            "Use when the user says 'release', 'let go', 'relax', 'hold', 'stand still', or similar. "
+            "Release makes the robot go limp; calling again re-engages the hold."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "type": "function",
         "name": "turn_robot",
-        "description": "Turn the robot in place (rotate left or right).",
+        "description": (
+            "Turn the robot in place (rotate left or right). "
+            "Specify angle_degrees for precise turns (e.g. 90, 180, 360). "
+            "Specify duration_seconds for timed turns. "
+            "Omit both for continuous turning until stopped."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -85,9 +130,13 @@ TOOL_DEFINITIONS = [
                     "enum": ["slow", "medium", "fast"],
                     "description": "Turning speed.",
                 },
+                "angle_degrees": {
+                    "type": "number",
+                    "description": "How many degrees to turn (e.g. 90, 180, 360).",
+                },
                 "duration_seconds": {
                     "type": "number",
-                    "description": "How long to turn in seconds. Omit for continuous turning.",
+                    "description": "How long to turn in seconds.",
                 },
             },
             "required": ["direction", "speed"],
@@ -97,12 +146,15 @@ TOOL_DEFINITIONS = [
 
 SYSTEM_INSTRUCTIONS = """You are a locomotion controller for a Unitree G1 humanoid robot.
 
-You can ONLY control basic locomotion: walking forward/backward, strafing left/right, turning, and stopping.
+You can control basic locomotion: walking forward/backward, strafing left/right, turning, stopping, and activating/deactivating the robot.
 
 Rules:
+- The robot must be activated before it can move. When the user says "get ready", "stand up", "activate", or "wake up", call activate_robot FIRST.
 - When the user says "stop", "halt", "freeze", or anything similar, IMMEDIATELY call stop_robot.
+- When the user says "release", "let go", "relax", or "hold", call release_robot to toggle between limp and held states.
 - Default to "medium" speed unless the user specifies otherwise.
 - If the user specifies a distance (e.g. "walk forward 2 meters"), use distance_meters.
+- If the user specifies a turn angle (e.g. "turn right 90 degrees"), use angle_degrees. Common angles: 90 (quarter turn), 180 (about-face), 360 (full spin).
 - For sequences like "walk forward 1 meter then turn right", execute them as SEPARATE function calls with appropriate durations. The system will queue and execute them in order.
 - If the user asks for something you cannot do (navigate to a place, pick up objects, complex plans), tell them: "That requires full mode. Please switch to OpenClaw mode for complex tasks."
 - Always confirm what you're doing, e.g. "Moving forward 1 meter, then turning right."

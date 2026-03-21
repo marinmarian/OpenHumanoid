@@ -81,53 +81,39 @@ cd GR00T-WholeBodyControl/decoupled_wbc
 >
 > The container is named `decoupled_wbc-bash-root` by default.
 
-**3c. Launch the control stack** (inside the container):
+**3c. Launch control loop + bridge** (single command):
+
+The bridge and control loop run in the **same process** to avoid CycloneDDS networking issues in Docker. Copy the launcher and start it:
+
+```bash
+# From your host machine (from the OpenHumanoid repo root)
+export WBC_CONTAINER=decoupled_wbc-bash-root
+docker cp bridge/run_with_bridge.py $WBC_CONTAINER:/tmp/run_with_bridge.py
+```
 
 For simulation:
 
 ```bash
-python decoupled_wbc/control/main/teleop/run_g1_control_loop.py
+export WBC_CONTAINER=decoupled_wbc-bash-root
+docker exec $WBC_CONTAINER bash -c "source /opt/ros/humble/setup.bash && source /root/venv/bin/activate && python3 /tmp/run_with_bridge.py --port 8765"
 ```
 
 For the real robot (host machine must have static IP `192.168.123.222`, subnet `255.255.255.0`):
 
 ```bash
-python decoupled_wbc/control/main/teleop/run_g1_control_loop.py --interface real
-```
-
-**3d. Verify keyboard control works** (optional but recommended):
-
-With the control loop running, these keyboard shortcuts should work in the terminal:
-
-| Key | Action |
-|-----|--------|
-| `]` | Activate policy |
-| `o` | Deactivate policy |
-| `9` | Release / hold the robot |
-| `w` / `s` | Move forward / backward |
-| `a` / `d` | Strafe left / right |
-| `q` / `e` | Rotate left / right |
-| `z` | Zero navigation commands |
-| `1` / `2` | Raise / lower base height |
-
-Once keyboard control works, the bridge server will use the same underlying ROS2 topics.
-
-### Step 4: Start the bridge server (inside Docker)
-
-Copy the bridge script into the running container and start it:
-
-```bash
-# From your host machine (in a separate terminal, from the OpenHumanoid repo root)
-WBC_CONTAINER=decoupled_wbc-bash-root
-docker cp bridge/bridge_server.py $WBC_CONTAINER:/tmp/bridge_server.py
-docker exec $WBC_CONTAINER bash -c "source /opt/ros/humble/setup.bash && python3 /tmp/bridge_server.py --port 8765"
+export WBC_CONTAINER=decoupled_wbc-bash-root
+docker exec $WBC_CONTAINER bash -c "source /opt/ros/humble/setup.bash && source /root/venv/bin/activate && python3 /tmp/run_with_bridge.py --port 8765 -- --interface real"
 ```
 
 You should see:
 
 ```
-[bridge_server] Bridge HTTP server listening on 0.0.0.0:8765
+[BRIDGE] ROS2 publisher ready on /keyboard_input
+[BRIDGE] HTTP server listening on 0.0.0.0:8765
+[BRIDGE] Launching control loop with args: [...]
 ```
+
+> The launcher automatically adds `--keyboard-dispatcher-type ros` so the control loop receives commands via ROS2 topics from the bridge. Everything runs in one process -- no DDS inter-process networking needed.
 
 Verify from the host:
 
@@ -136,23 +122,19 @@ curl http://localhost:8765/status
 # Should return: {"ok": true, "last_cmd": {"vx": 0.0, "vy": 0.0, "vyaw": 0.0}, ...}
 ```
 
-**Monitor incoming commands** (open in a separate terminal):
+If you need to restart (e.g. after updating the script):
 
 ```bash
-# Watch the ROS2 nav commands being published
-docker exec -it $WBC_CONTAINER bash -c "source /opt/ros/humble/setup.bash && ros2 topic echo /nav_cmd"
-
-# Or check the last received command at any time
-curl http://localhost:8765/status
+docker exec decoupled_wbc-bash-root pkill -9 -f run_with_bridge.py
 ```
 
-> **Without the robot (mock mode):** Skip steps 3-4 and run the mock bridge on your host instead:
+> **Without the robot (mock mode):** Skip step 3 entirely and run the mock bridge on your host instead:
 > ```bash
 > uv run python bridge/mock_bridge.py
 > ```
 > Same HTTP API, prints commands to console. Everything else works the same.
 
-### Step 5: Run a voice mode
+### Step 4: Run a voice mode
 
 **Fast mode** -- OpenAI Realtime API (low-latency locomotion):
 
@@ -161,6 +143,7 @@ uv run python -m realtime.main
 ```
 
 Speak commands like:
+- "get ready" / "stand up" -- activates the robot (required before moving)
 - "walk forward" -- continuous until you say "stop"
 - "turn left slowly" -- qualitative speed control
 - "walk forward for 3 seconds" -- timed, auto-stops
@@ -190,22 +173,29 @@ Quick end-to-end test with mock bridge:
 # Terminal 1: start mock bridge
 uv run python bridge/mock_bridge.py
 
-# Terminal 2: send a test command
+# Terminal 2: test commands
+curl -X POST http://localhost:8765/activate
+# Terminal 1 shows: [MOCK] ACTIVATE → key=']'
+
 curl -X POST http://localhost:8765/move \
   -H 'Content-Type: application/json' \
-  -d '{"vx": 0.3, "vy": 0.0, "vyaw": 0.0}'
+  -d '{"vx": 0.4, "vy": 0.0, "vyaw": 0.0}'
+# Terminal 1 shows: [MOCK] MOVE  vx=0.40  vy=0.00  vyaw=0.00  → keys=['z', 'w', 'w']
 
-# Terminal 1 should show: [MOCK] MOVE  vx=0.30  vy=0.00  vyaw=0.00
+curl -X POST http://localhost:8765/stop
+# Terminal 1 shows: [MOCK] STOP → key='z'
 ```
 
 ### Bridge HTTP API reference
 
 | Method | Endpoint | Body | Description |
 |--------|----------|------|-------------|
-| POST | `/move` | `{"vx": 0.3, "vy": 0.0, "vyaw": 0.0}` | Set velocity (auto-clamped to safe range) |
-| POST | `/stop` | (none) | Stop all movement immediately |
-| POST | `/key` | `{"key": "w"}` | Emulate keyboard press (w/a/s/d/q/e/z) |
-| GET | `/status` | -- | Current velocity, limits |
+| POST | `/move` | `{"vx": 0.4, "vy": 0.0, "vyaw": 0.0}` | Set velocity (translated to key presses, step=0.2) |
+| POST | `/stop` | (none) | Zero all velocities (key `z`) |
+| POST | `/activate` | (none) | Activate walking policy (key `]`) |
+| POST | `/deactivate` | (none) | Deactivate policy (key `o`) |
+| POST | `/key` | `{"key": "w"}` | Publish arbitrary keyboard key |
+| GET | `/status` | -- | Current velocity, step size |
 
 ## Planning
 
@@ -222,7 +212,7 @@ curl -X POST http://localhost:8765/move \
 
 ```
 OpenHumanoid/
-├── bridge/              # HTTP→ROS2 bridge (runs in Docker or mock on host)
+├── bridge/              # Bridge server (run_with_bridge.py for Docker, mock for host)
 ├── realtime/            # Fast mode: OpenAI Realtime API voice client
 ├── openclaw/            # Full mode: OpenClaw Gateway config + skills
 ├── scripts/             # Launch and utility scripts

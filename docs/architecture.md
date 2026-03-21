@@ -2,7 +2,7 @@
 
 ## Overview
 
-OpenHumanoid provides voice-controlled locomotion for a Unitree G1 humanoid robot. Two switchable modes share a single HTTP bridge to the robot's Whole-Body Controller (WBC).
+OpenHumanoid provides voice-controlled locomotion for a Unitree G1 humanoid robot. Two switchable modes share a single HTTP bridge that translates velocity commands into keyboard events for the WBC's `G1GearWbcPolicy`.
 
 ## Modes
 
@@ -12,10 +12,10 @@ Low-latency voice control (~500ms) using the OpenAI Realtime API.
 
 ```
 Microphone → OpenAI Realtime API (gpt-realtime, WebSocket)
-    → function call (move_robot / stop_robot / turn_robot)
-    → HTTP POST to bridge_server.py in Docker
-    → rclpy publish to ROS2 topics
-    → Decoupled WBC → G1 Robot
+    → function call (move_robot / stop_robot / turn_robot / activate_robot / deactivate_robot)
+    → HTTP POST to bridge (in-process with control loop)
+    → publish keyboard keys to /keyboard_input ROS2 topic
+    → G1GearWbcPolicy.handle_keyboard_button() → WBC → G1 Robot
     
 Realtime API → voice reply → Speaker
 ```
@@ -26,12 +26,14 @@ Locomotion only. If the user asks for complex tasks, it tells them to switch to 
 
 | Type | Example | Behavior |
 |------|---------|----------|
+| Activate | "get ready" / "stand up" | Activates walking policy (key `]`) |
 | Continuous | "walk forward" | Moves until user says "stop" |
 | Timed | "walk forward for 3 seconds" | Moves, auto-stops after duration |
 | Distance-based | "walk forward 2 meters" | Duration computed from distance/speed |
 | Sequential | "walk forward 1 meter then turn right" | Chained function calls, executed in order |
+| Deactivate | "go to sleep" / "deactivate" | Deactivates policy (key `o`) |
 
-All timed/distance movements are **interruptible** -- saying "stop" or any new command mid-movement halts the robot immediately. This is achieved by dispatching `_handle_response_done` as a background `asyncio.Task` (so the event loop stays responsive to new WebSocket events) and using `asyncio.wait_for` on an `asyncio.Event` that fires when the VAD detects new speech.
+All timed/distance movements are **interruptible** -- saying "stop" or any new command mid-movement halts the robot immediately.
 
 ### Full Mode (`VOICE_MODE=openclaw`)
 
@@ -40,9 +42,8 @@ Full orchestration (~2-5s latency) using OpenClaw Gateway.
 ```
 Voice/Text → OpenClaw Gateway (LLM + exec tool + skills)
     → exec: curl -X POST http://localhost:8765/move ...
-    → bridge_server.py in Docker
-    → rclpy publish to ROS2 topics
-    → Decoupled WBC → G1 Robot
+    → bridge HTTP server (in-process)
+    → publish keyboard keys → WBC → G1 Robot
 
 OpenClaw → TTS-1 → voice reply (auto-TTS)
 ```
@@ -51,31 +52,30 @@ Supports locomotion now. Future DiMOS navigation and GR00T VLA manipulation plug
 
 ## Bridge Server
 
-Single Python file (`bridge/bridge_server.py`) running inside the WBC Docker container. Uses only Python stdlib + rclpy (both already in the Docker image).
+The bridge runs **in the same process** as the WBC control loop via `bridge/run_with_bridge.py`. This avoids CycloneDDS inter-process networking issues in Docker (the container's loopback interface doesn't support multicast).
+
+The bridge translates HTTP velocity commands into keyboard key sequences published on the `/keyboard_input` ROS2 topic. The WBC's `G1GearWbcPolicy.handle_keyboard_button()` processes these keys (each press changes velocity by ±0.2 m/s).
 
 ### HTTP API
 
 | Method | Endpoint | Body | Description |
 |--------|----------|------|-------------|
-| POST | `/move` | `{"vx": 0.3, "vy": 0.0, "vyaw": 0.0}` | Set velocity (clamped to safe range) |
-| POST | `/stop` | (none) | Stop all movement |
-| POST | `/key` | `{"key": "w"}` | Emulate keyboard press |
-| GET | `/status` | — | Current velocity and limits |
+| POST | `/move` | `{"vx": 0.4, "vy": 0.0, "vyaw": 0.0}` | Translate to key sequence: `z` (reset) + directional presses |
+| POST | `/stop` | (none) | Publish `z` key (zero all velocities) |
+| POST | `/activate` | (none) | Publish `]` key (activate walking policy) |
+| POST | `/deactivate` | (none) | Publish `o` key (deactivate policy) |
+| POST | `/key` | `{"key": "w"}` | Publish arbitrary keyboard key |
+| GET | `/status` | — | Current velocity and step size |
 
-### Safety
+### Velocity → Key Translation
 
-All velocities are clamped inline:
-- Linear (vx, vy): -0.5 to 0.5 m/s
-- Angular (vyaw): -0.5 to 0.5 rad/s
+The `/move` endpoint converts absolute velocities to keyboard sequences:
 
-These match the `KeyboardNavigationPolicy` limits in the Decoupled WBC.
+1. Always starts with `z` (reset all to zero)
+2. Then repeats directional keys: `w`/`s` for vx, `a`/`d` for vy, `q`/`e` for vyaw
+3. Number of presses = `round(abs(velocity) / 0.2)`
 
-### ROS2 Topics
-
-| Topic | Type | Used by |
-|-------|------|---------|
-| `/keyboard_input` | `std_msgs/String` | Key emulation (w/a/s/d/q/e/z) |
-| `/nav_cmd` | `std_msgs/Float32MultiArray` | Direct velocity `[vx, vy, vyaw]` |
+Example: `{"vx": 0.4}` → keys `['z', 'w', 'w']` → vx = 0.0 → 0.2 → 0.4
 
 ## Deployment
 
@@ -83,7 +83,7 @@ Everything runs on one laptop:
 
 | Location | Component | Port |
 |----------|-----------|------|
-| Docker container | bridge_server.py + Decoupled WBC | 8765 (exposed) |
+| Docker container | `run_with_bridge.py` (bridge + WBC control loop, single process) | 8765 (exposed) |
 | Host | Realtime client (fast mode) | — |
 | Host | OpenClaw Gateway (full mode) | 18789 |
 | Cloud | OpenAI Realtime API | 443 |
@@ -100,7 +100,7 @@ For development without Docker or the robot, run `uv run python bridge/mock_brid
 
 | Task | Integration Point | What to Add |
 |------|-------------------|-------------|
-| Task 2 (VLA) | New OpenClaw skill + bridge `/manipulation` endpoint | `vla-control` skill, extend bridge_server.py |
+| Task 2 (VLA) | New OpenClaw skill + bridge endpoint | `vla-control` skill, extend bridge |
 | Task 3 (DiMOS) | New OpenClaw skill, uses existing `/move` endpoint | `dimos-navigation` skill |
 | Task 4 (DiMOS+VLA) | OpenClaw orchestrates both skills | No new code, just skill composition |
 
@@ -117,17 +117,8 @@ For development without Docker or the robot, run `uv run python bridge/mock_brid
 
 ### Speed Reference
 
-| Label | Velocity (m/s or rad/s) | Distance→Duration Example |
-|-------|------------------------|---------------------------|
-| slow | 0.15 | 2m → 13.3s |
-| medium | 0.30 | 2m → 6.7s |
-| fast | 0.45 | 2m → 4.4s |
-| max (clamp) | 0.50 | — |
-
-### Realtime API Event Handling
-
-Key design points for the WebSocket client (`realtime/client.py`):
-
-- **VAD-aware `response.create`**: Only sent after function call processing (model needs to respond to tool output). For voice-only replies, the next response is triggered naturally by VAD detecting new speech. A `_response_active` flag prevents sending `response.create` when the API already has an in-progress response.
-- **Background task dispatch**: `response.done` handlers run via `asyncio.create_task` so the event loop continues processing WebSocket messages during timed waits. Without this, `speech_started` events would be buffered and the interrupt mechanism would not work.
-- **Interruptible sleep**: `_interruptible_sleep` uses `asyncio.wait_for` on an `asyncio.Event`. When `speech_started` fires, the event is set, the sleep terminates, a `/stop` is sent to the bridge, and the remaining command sequence is aborted.
+| Label | Velocity (m/s) | Key presses | Distance→Duration Example |
+|-------|---------------|-------------|---------------------------|
+| slow | 0.2 | 1 press | 2m → 10.0s |
+| medium | 0.4 | 2 presses | 2m → 5.0s |
+| fast | 0.6 | 3 presses | 2m → 3.3s |
