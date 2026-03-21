@@ -6,10 +6,12 @@ Voice-controlled humanoid robot integrating **OpenClaw**, **SLAM/LiDAR Navigatio
 
 Two switchable voice-control modes, both sharing a single HTTP bridge to the robot:
 
-| Mode | Latency | Input | Capabilities |
-|------|---------|-------|--------------|
-| **Fast** (`VOICE_MODE=realtime`) | ~500ms | Voice (Realtime API) | Locomotion: walk, turn, stop, distance/timed/sequential commands |
-| **Full** (`VOICE_MODE=openclaw`) | ~2-5s | Voice + Text + WhatsApp (OpenClaw) | Full orchestration + future Navigation/VLA |
+
+| Mode                             | Latency | Input                              | Capabilities                                                     |
+| -------------------------------- | ------- | ---------------------------------- | ---------------------------------------------------------------- |
+| **Fast** (`VOICE_MODE=realtime`) | ~500ms  | Voice (Realtime API)               | Locomotion: walk, turn, stop, distance/timed/sequential commands |
+| **Full** (`VOICE_MODE=openclaw`) | ~2-5s   | Voice + Text + WhatsApp (OpenClaw) | Full orchestration + future Navigation/VLA                       |
+
 
 See [docs/architecture.md](docs/architecture.md) for the full architecture and data flow.
 
@@ -76,6 +78,7 @@ uv run python -m realtime.main
 ```
 
 Voice commands:
+
 - "get ready" / "stand up" — activate robot (required first)
 - "walk forward" — continuous until "stop"
 - "walk forward slowly" / "walk forward fast" — speed control
@@ -96,14 +99,16 @@ Open [http://127.0.0.1:18789](http://127.0.0.1:18789) for WebChat, or use Talk M
 
 ## Bridge HTTP API
 
-| Method | Endpoint | Body | Description |
-|--------|----------|------|-------------|
-| POST | `/move` | `{"vx": 0.4, "vy": 0.0, "vyaw": 0.0}` | Set velocity (translated to key presses, step=0.2) |
-| POST | `/stop` | — | Zero all velocities (key `z`) |
-| POST | `/activate` | — | Activate walking policy (key `]`) |
-| POST | `/deactivate` | — | Deactivate policy (key `o`) |
-| POST | `/key` | `{"key": "9"}` | Publish arbitrary key (e.g. `9` = release/hold) |
-| GET | `/status` | — | Current velocity and step size |
+
+| Method | Endpoint      | Body                                  | Description                                        |
+| ------ | ------------- | ------------------------------------- | -------------------------------------------------- |
+| POST   | `/move`       | `{"vx": 0.4, "vy": 0.0, "vyaw": 0.0}` | Set velocity (translated to key presses, step=0.2) |
+| POST   | `/stop`       | —                                     | Zero all velocities (key `z`)                      |
+| POST   | `/activate`   | —                                     | Activate walking policy (key `]`)                  |
+| POST   | `/deactivate` | —                                     | Deactivate policy (key `o`)                        |
+| POST   | `/key`        | `{"key": "9"}`                        | Publish arbitrary key (e.g. `9` = release/hold)    |
+| GET    | `/status`     | —                                     | Current velocity and step size                     |
+
 
 Speed reference: slow=0.2, medium=0.4, fast=0.6 m/s (1/2/3 key presses).
 
@@ -121,11 +126,13 @@ curl -X POST http://localhost:8765/stop
 
 ## Planning
 
-| Task | Scope | Description |
-|------|-------|-------------|
-| **Task 1 — OpenClaw + WBC** | MVP | Voice → locomotion pipeline via shared bridge |
-| **Task 2 — SLAM/LiDAR Navigation** | Tier 2 | Autonomous navigation with obstacle avoidance |
+
+| Task                                | Scope  | Description                                         |
+| ----------------------------------- | ------ | --------------------------------------------------- |
+| **Task 1 — OpenClaw + WBC**         | MVP    | Voice → locomotion pipeline via shared bridge       |
+| **Task 2 — SLAM/LiDAR Navigation**  | Tier 2 | Autonomous navigation with obstacle avoidance       |
 | **Task 3 — VLA + Navigation + WBC** | Tier 3 | Full loco-manipulation with vision-language actions |
+
 
 **Future: GEAR-SONIC integration** — The repo includes NVIDIA's GEAR-SONIC kinematic planner (`gear_sonic_deploy/`) with 27 motion modes (walk, run, squat, crawl, box, dance, zombie walk, etc.). This C++/TensorRT stack accepts commands via ZMQ and could replace or complement the Decoupled WBC for expressive locomotion demos.
 
