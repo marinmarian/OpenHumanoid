@@ -61,13 +61,41 @@ cd GR00T-WholeBodyControl/decoupled_wbc
 # Simulation (MuJoCo)
 ./scripts/start_bridge.sh
 
-# Real robot (host IP must be 192.168.123.222)
+# Real robot
 ./scripts/start_bridge.sh real
 ```
 
 Verify: `curl http://localhost:8765/status`
 
+Kill bridge: `docker exec decoupled_wbc-bash-root pkill -9 -f run_with_bridge.py`
+
 > **Without Docker/robot:** Run `uv run python bridge/mock_bridge.py` instead. Same API, prints to console.
+
+#### Real robot prerequisites
+
+Before `start_bridge.sh real` will work, the host ethernet NIC must have an IPv4 address on the robot subnet. CycloneDDS (used by the Unitree SDK) ignores interfaces without an IP.
+
+```bash
+# 1. Assign IP to the robot NIC (one-time per boot)
+sudo ip addr add 192.168.123.222/24 dev enp0s31f6
+
+# 2. Allow DDS multicast traffic through the firewall
+sudo ufw allow in on enp0s31f6
+
+# 3. Put the robot in damping mode (L2+B on controller) before launching
+```
+
+**Different laptop?** You may need to change the NIC name. Find yours with:
+
+```bash
+ip link show          # look for the wired ethernet interface
+```
+
+Then either set it inline or export it:
+
+```bash
+ROBOT_NIC=eth0 ./scripts/start_bridge.sh real
+```
 
 ### 5. Run a voice mode
 

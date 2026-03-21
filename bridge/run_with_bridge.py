@@ -39,6 +39,7 @@ def _dlog(hypothesis, location, message, data=None):
     try:
         with open(_DEBUG_LOG, "a") as _f:
             _f.write(_j.dumps({"sessionId":"df55b2","hypothesisId":hypothesis,"location":location,"message":message,"data":data or {},"timestamp":int(_t.time()*1000)})+"\n")
+            _f.flush()
     except Exception:
         pass
 # #endregion
@@ -142,7 +143,7 @@ def start_bridge_server(port: int):
     """Start the HTTP bridge in a daemon thread."""
     HTTPServer.allow_reuse_address = True
     server = HTTPServer(("0.0.0.0", port), BridgeHandler)
-    print(f"[BRIDGE] HTTP server listening on 0.0.0.0:{port}")
+    print(f"[BRIDGE] HTTP server listening on 0.0.0.0:{port}", flush=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server
@@ -166,7 +167,7 @@ def main():
     # Force keyboard-dispatcher-type to ros if not specified
     if "--keyboard-dispatcher-type" not in loop_args:
         loop_args.extend(["--keyboard-dispatcher-type", "ros"])
-        print("[BRIDGE] Auto-adding --keyboard-dispatcher-type ros")
+        print("[BRIDGE] Auto-adding --keyboard-dispatcher-type ros", flush=True)
 
     # Step 1: Initialize ROS2 and create the bridge publisher BEFORE the control loop.
     # This way, the control loop's ROSManager will reuse our rclpy context,
@@ -178,7 +179,7 @@ def main():
     key_pub = _node.create_publisher(String, KEYBOARD_INPUT_TOPIC, 10)
     spin_thread = threading.Thread(target=rclpy.spin, args=(_node,), daemon=True)
     spin_thread.start()
-    print(f"[BRIDGE] ROS2 publisher ready on {KEYBOARD_INPUT_TOPIC}")
+    print(f"[BRIDGE] ROS2 publisher ready on {KEYBOARD_INPUT_TOPIC}", flush=True)
 
     # #region agent log
     time.sleep(0.5)
@@ -199,13 +200,26 @@ def main():
 
     # Step 3: Patch sys.argv and run the control loop.
     sys.argv = ["run_g1_control_loop.py"] + loop_args
-    print(f"[BRIDGE] Launching control loop with args: {loop_args}")
+    print(f"[BRIDGE] Launching control loop with args: {loop_args}", flush=True)
+
+    # #region agent log
+    _dlog("H1", "run_with_bridge.py:main", "about to import control loop modules", {"loop_args": loop_args})
+    # #endregion
 
     import tyro
     from decoupled_wbc.control.main.teleop.configs.configs import ControlLoopConfig
     from decoupled_wbc.control.main.teleop.run_g1_control_loop import main as control_main
 
+    # #region agent log
+    _dlog("H1", "run_with_bridge.py:main", "imports done, calling tyro.cli", {})
+    # #endregion
+
     config = tyro.cli(ControlLoopConfig)
+
+    # #region agent log
+    _dlog("H1", "run_with_bridge.py:main", "config parsed, about to call control_main", {"interface": config.interface, "env_type": config.env_type, "kbd_dispatcher": config.keyboard_dispatcher_type})
+    # #endregion
+
     control_main(config)
 
 
