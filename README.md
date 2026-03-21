@@ -1,17 +1,15 @@
 # OpenHumanoid
 
-Voice-controlled humanoid robot integrating **OpenClaw**, **DiMOS**, and **GR00T VLA** for voice-driven locomotion and loco-manipulation on the Unitree G1.
+Voice-controlled humanoid robot integrating **OpenClaw**, **SLAM/LiDAR Navigation**, and **GR00T WBC + VLA** for voice-driven locomotion and loco-manipulation on the Unitree G1.
 
 ## How It Works
 
 Two switchable voice-control modes, both sharing a single HTTP bridge to the robot:
 
-
-| Mode                             | Latency | Input                   | Capabilities                                                     |
-| -------------------------------- | ------- | ----------------------- | ---------------------------------------------------------------- |
-| **Fast** (`VOICE_MODE=realtime`) | ~500ms  | Voice (Realtime API)    | Locomotion: walk, turn, stop, distance/timed/sequential commands |
-| **Full** (`VOICE_MODE=openclaw`) | ~2-5s   | Voice + Text (OpenClaw) | Full orchestration + future DiMOS/VLA                            |
-
+| Mode | Latency | Input | Capabilities |
+|------|---------|-------|--------------|
+| **Fast** (`VOICE_MODE=realtime`) | ~500ms | Voice (Realtime API) | Locomotion: walk, turn, stop, distance/timed/sequential commands |
+| **Full** (`VOICE_MODE=openclaw`) | ~2-5s | Voice + Text + WhatsApp (OpenClaw) | Full orchestration + future Navigation/VLA |
 
 See [docs/architecture.md](docs/architecture.md) for the full architecture and data flow.
 
@@ -20,163 +18,116 @@ See [docs/architecture.md](docs/architecture.md) for the full architecture and d
 - Python 3.10+
 - [uv](https://docs.astral.sh/uv/) (Python package manager)
 - Docker (for the WBC container)
-- A Unitree G1 robot connected via Ethernet/WiFi (or use mock mode for dev)
+- A Unitree G1 robot connected via Ethernet (or use mock mode for dev)
 - An [OpenAI API key](https://platform.openai.com/api-keys) with Realtime API access
 - A working microphone and speaker (for voice modes)
 
-## Setup Guide
+## Quick Start
 
-### Step 1: Install system dependencies and clone
-
-```bash
-sudo apt-get install -y libportaudio2   # required by sounddevice for mic/speaker
-```
+### 1. Clone and install
 
 ```bash
+sudo apt-get install -y libportaudio2
 git clone git@github.com:alexzh3/OpenHumanoid.git
 cd OpenHumanoid
 uv sync
 ```
 
-### Step 2: Configure environment
+### 2. Configure
 
 ```bash
 cp .env.example .env
+# Edit .env and set OPENAI_API_KEY
 ```
 
-Edit `.env` and set your values:
-
-```
-VOICE_MODE=realtime          # "realtime" (fast, locomotion) or "openclaw" (full)
-OPENAI_API_KEY=sk-...        # Your OpenAI API key
-BRIDGE_URL=http://localhost:8765
-```
-
-### Step 3: Set up and run the Decoupled WBC
-
-Full docs: [Decoupled WBC Reference](https://nvlabs.github.io/GR00T-WholeBodyControl/references/decoupled_wbc.html)
-
-**3a. Clone the WBC repository** (one-time setup):
+### 3. Set up the WBC (one-time)
 
 ```bash
-sudo apt update && sudo apt install git git-lfs
 git lfs install
-
-# From inside the OpenHumanoid repo root
 git clone https://github.com/NVlabs/GR00T-WholeBodyControl.git
 cd GR00T-WholeBodyControl/decoupled_wbc
+./docker/run_docker.sh --install --root    # first time: pulls Docker image
+./docker/run_docker.sh --root              # subsequent runs: enters container
 ```
 
-> The cloned repo is already in `.gitignore` so it won't be committed.
+> Container uses `--network host` so the bridge port (8765) is accessible from the host.
+> Container name: `decoupled_wbc-bash-root`.
 
-**3b. Start the Docker environment** (run from inside `decoupled_wbc/`):
-
-```bash
-# First time: install the Docker image (pulls from docker.io/nvgear)
-./docker/run_docker.sh --install --root
-
-# Subsequent runs: re-enter the container
-./docker/run_docker.sh --root
-```
-
-> The container uses `--network host` by default, so port 8765 for our bridge is automatically accessible from the host.
->
-> The container is named `decoupled_wbc-bash-root` by default.
-
-**3c. Launch control loop + bridge:**
+### 4. Launch bridge + control loop
 
 ```bash
-# From the OpenHumanoid repo root -- simulation
+# Simulation (MuJoCo)
 ./scripts/start_bridge.sh
 
-# Or for the real robot (host IP must be 192.168.123.222)
+# Real robot (host IP must be 192.168.123.222)
 ./scripts/start_bridge.sh real
 ```
 
-You should see `[BRIDGE] HTTP server listening on 0.0.0.0:8765` followed by control loop output.
+Verify: `curl http://localhost:8765/status`
 
-Verify from another terminal: `curl http://localhost:8765/status`
+> **Without Docker/robot:** Run `uv run python bridge/mock_bridge.py` instead. Same API, prints to console.
 
-> **Without the robot (mock mode):** Skip step 3 entirely and run `uv run python bridge/mock_bridge.py` instead. Same HTTP API, prints to console.
+### 5. Run a voice mode
 
-### Step 4: Run a voice mode
-
-**Fast mode** -- OpenAI Realtime API (low-latency locomotion):
+**Fast mode** (OpenAI Realtime API):
 
 ```bash
 uv run python -m realtime.main
 ```
 
-Speak commands like:
+Voice commands:
+- "get ready" / "stand up" — activate robot (required first)
+- "walk forward" — continuous until "stop"
+- "walk forward slowly" / "walk forward fast" — speed control
+- "walk forward for 3 seconds" — timed, auto-stops
+- "walk forward 2 meters" — distance-based
+- "walk forward 1 meter then turn right" — sequential
+- "release" / "relax" — toggle hold/limp
+- "stop" — immediate halt
 
-- "get ready" / "stand up" -- activates the robot (required before moving)
-- "walk forward" -- continuous until you say "stop"
-- "turn left slowly" -- qualitative speed control
-- "walk forward for 3 seconds" -- timed, auto-stops
-- "walk forward 2 meters" -- distance-based, duration computed from speed
-- "walk forward 1 meter then turn right" -- sequential, executed in order
-- "stop" -- immediately halts any movement (including mid-sequence)
-
-All timed/distance movements are interruptible -- say "stop" or a new command and the robot halts immediately.
-
-**Full mode** -- OpenClaw Gateway (full orchestration + TTS):
+**Full mode** (OpenClaw Gateway):
 
 ```bash
-# First-time setup only
 cd openclaw && bash setup.sh && cd ..
-
-# Start the gateway
 openclaw gateway start
 ```
 
-Then open [http://127.0.0.1:18789](http://127.0.0.1:18789) for WebChat, or use Talk Mode for voice input/output. OpenClaw processes commands through the `robot_control` skill, which sends curl requests to the bridge.
+Open [http://127.0.0.1:18789](http://127.0.0.1:18789) for WebChat, or use Talk Mode for voice. Supports text and voice via WhatsApp when configured.
 
-### Testing the pipeline
+## Bridge HTTP API
 
-Quick end-to-end test with mock bridge:
+| Method | Endpoint | Body | Description |
+|--------|----------|------|-------------|
+| POST | `/move` | `{"vx": 0.4, "vy": 0.0, "vyaw": 0.0}` | Set velocity (translated to key presses, step=0.2) |
+| POST | `/stop` | — | Zero all velocities (key `z`) |
+| POST | `/activate` | — | Activate walking policy (key `]`) |
+| POST | `/deactivate` | — | Deactivate policy (key `o`) |
+| POST | `/key` | `{"key": "9"}` | Publish arbitrary key (e.g. `9` = release/hold) |
+| GET | `/status` | — | Current velocity and step size |
+
+Speed reference: slow=0.2, medium=0.4, fast=0.6 m/s (1/2/3 key presses).
+
+## Testing
 
 ```bash
-# Terminal 1: start mock bridge
+# Terminal 1: mock bridge
 uv run python bridge/mock_bridge.py
 
-# Terminal 2: test commands
+# Terminal 2: test
 curl -X POST http://localhost:8765/activate
-# Terminal 1 shows: [MOCK] ACTIVATE → key=']'
-
-curl -X POST http://localhost:8765/move \
-  -H 'Content-Type: application/json' \
-  -d '{"vx": 0.4, "vy": 0.0, "vyaw": 0.0}'
-# Terminal 1 shows: [MOCK] MOVE  vx=0.40  vy=0.00  vyaw=0.00  → keys=['z', 'w', 'w']
-
+curl -X POST http://localhost:8765/move -H 'Content-Type: application/json' -d '{"vx": 0.4}'
 curl -X POST http://localhost:8765/stop
-# Terminal 1 shows: [MOCK] STOP → key='z'
 ```
-
-### Bridge HTTP API reference
-
-
-| Method | Endpoint      | Body                                  | Description                                        |
-| ------ | ------------- | ------------------------------------- | -------------------------------------------------- |
-| POST   | `/move`       | `{"vx": 0.4, "vy": 0.0, "vyaw": 0.0}` | Set velocity (translated to key presses, step=0.2) |
-| POST   | `/stop`       | (none)                                | Zero all velocities (key `z`)                      |
-| POST   | `/activate`   | (none)                                | Activate walking policy (key `]`)                  |
-| POST   | `/deactivate` | (none)                                | Deactivate policy (key `o`)                        |
-| POST   | `/key`        | `{"key": "w"}`                        | Publish arbitrary keyboard key                     |
-| GET    | `/status`     | --                                    | Current velocity, step size                        |
-
 
 ## Planning
 
-Task dependency graph
+| Task | Scope | Description |
+|------|-------|-------------|
+| **Task 1 — OpenClaw + WBC** | MVP | Voice → locomotion pipeline via shared bridge |
+| **Task 2 — SLAM/LiDAR Navigation** | Tier 2 | Autonomous navigation with obstacle avoidance |
+| **Task 3 — VLA + Navigation + WBC** | Tier 3 | Full loco-manipulation with vision-language actions |
 
-
-| Task                           | Scope  | Description                                   |
-| ------------------------------ | ------ | --------------------------------------------- |
-| **Task 1 — OpenClaw + WBC**    | MVP    | Voice → locomotion pipeline via shared bridge |
-| **Task 2 — VLA Pipeline**      | Tier 2 | GR00T inference pipeline                      |
-| **Task 3 — DiMOS + WBC**       | Tier 2 | Navigation stack → locomotion                 |
-| **Task 4 — DiMOS + WBC + VLA** | Tier 3 | Full loco-manipulation                        |
-
+**Future: GEAR-SONIC integration** — The repo includes NVIDIA's GEAR-SONIC kinematic planner (`gear_sonic_deploy/`) with 27 motion modes (walk, run, squat, crawl, box, dance, zombie walk, etc.). This C++/TensorRT stack accepts commands via ZMQ and could replace or complement the Decoupled WBC for expressive locomotion demos.
 
 ## Project Structure
 
@@ -184,19 +135,20 @@ Task dependency graph
 OpenHumanoid/
 ├── bridge/              # Bridge server (run_with_bridge.py for Docker, mock for host)
 ├── realtime/            # Fast mode: OpenAI Realtime API voice client
-├── openclaw/            # Full mode: OpenClaw Gateway config + skills
-├── scripts/             # Launch and utility scripts
+├── openclaw/            # Full mode: OpenClaw Gateway config, skills, workspace
+├── scripts/             # Launch and utility scripts (start_bridge.sh, launch.sh)
 ├── docs/                # Architecture docs and planning assets
+├── GR00T-WholeBodyControl/  # NVIDIA WBC repo (gitignored, clone separately)
 ├── CONTEXT.md           # AI-readable project context
 ├── .env.example         # Environment variable template
-└── pyproject.toml       # Python project config (uv sync)
+└── pyproject.toml       # Python dependencies (uv sync)
 ```
 
 ## Documentation
 
-- [Architecture & Data Flow](docs/architecture.md) — how the pipeline works
-- [AI Context](CONTEXT.md) — structured project context for coding agents
-- [Planning Image](docs/planning.png) — task dependency graph
+- [Architecture & Data Flow](docs/architecture.md)
+- [AI Context](CONTEXT.md)
+- [Planning Image](docs/planning.png)
 
 ## License
 

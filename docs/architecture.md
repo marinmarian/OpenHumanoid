@@ -4,23 +4,52 @@
 
 OpenHumanoid provides voice-controlled locomotion for a Unitree G1 humanoid robot. Two switchable modes share a single HTTP bridge that translates velocity commands into keyboard events for the WBC's `G1GearWbcPolicy`.
 
+## System Diagram
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│ HOST MACHINE                                                         │
+│                                                                      │
+│  ┌─────────────────────┐     ┌──────────────────────────────┐       │
+│  │ Fast Mode           │     │ Full Mode                    │       │
+│  │ (realtime/)         │     │ (openclaw/)                  │       │
+│  │                     │     │                              │       │
+│  │ Mic → Realtime API  │     │ Voice/Text/WhatsApp          │       │
+│  │ → function calls    │     │ → OpenClaw Gateway (LLM)     │       │
+│  │ → HTTP POST         │     │ → exec: curl → HTTP POST     │       │
+│  └─────────┬───────────┘     └──────────────┬───────────────┘       │
+│            │                                │                        │
+│            └───────────┬────────────────────┘                        │
+│                        ▼                                             │
+│  ┌─────────────────────────────────────────────────────────────┐    │
+│  │ DOCKER CONTAINER (decoupled_wbc-bash-root, --network host)  │    │
+│  │                                                             │    │
+│  │  run_with_bridge.py (single process)                        │    │
+│  │  ┌──────────────────┐    ┌────────────────────────────┐    │    │
+│  │  │ HTTP Bridge      │    │ WBC Control Loop           │    │    │
+│  │  │ :8765            │───▶│ ROSKeyboardDispatcher      │    │    │
+│  │  │ /move /stop      │    │ → G1GearWbcPolicy          │    │    │
+│  │  │ /activate /key   │    │ → MuJoCo sim / Real robot  │    │    │
+│  │  └──────────────────┘    └────────────────────────────┘    │    │
+│  └─────────────────────────────────────────────────────────────┘    │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
 ## Modes
 
 ### Fast Mode (`VOICE_MODE=realtime`)
 
-Low-latency voice control (~500ms) using the OpenAI Realtime API.
+Low-latency voice control (~500ms) using the OpenAI Realtime API with native function calling.
 
 ```
-Microphone → OpenAI Realtime API (gpt-realtime, WebSocket)
-    → function call (move_robot / stop_robot / turn_robot / activate_robot / deactivate_robot)
-    → HTTP POST to bridge (in-process with control loop)
-    → publish keyboard keys to /keyboard_input ROS2 topic
-    → G1GearWbcPolicy.handle_keyboard_button() → WBC → G1 Robot
+Microphone → OpenAI Realtime API (WebSocket, gpt-realtime)
+    → function call (move_robot / stop_robot / turn_robot / activate_robot / release_robot)
+    → HTTP POST to bridge
+    → keyboard keys published to /keyboard_input ROS2 topic
+    → G1GearWbcPolicy.handle_keyboard_button() → WBC → Robot
     
 Realtime API → voice reply → Speaker
 ```
-
-Locomotion only. If the user asks for complex tasks, it tells them to switch to full mode.
 
 **Voice command types:**
 
@@ -29,84 +58,119 @@ Locomotion only. If the user asks for complex tasks, it tells them to switch to 
 | Activate | "get ready" / "stand up" | Activates walking policy (key `]`) |
 | Continuous | "walk forward" | Moves until user says "stop" |
 | Timed | "walk forward for 3 seconds" | Moves, auto-stops after duration |
-| Distance-based | "walk forward 2 meters" | Duration computed from distance/speed |
-| Sequential | "walk forward 1 meter then turn right" | Chained function calls, executed in order |
-| Deactivate | "go to sleep" / "deactivate" | Deactivates policy (key `o`) |
+| Distance | "walk forward 2 meters" | Duration computed from calibrated speed |
+| Angle | "turn left 90 degrees" | Duration computed from calibrated yaw speed |
+| Sequential | "walk 1 meter then turn right" | Chained function calls, executed in order |
+| Release | "release" / "relax" | Toggles hold/limp (key `9`) |
 
-All timed/distance movements are **interruptible** -- saying "stop" or any new command mid-movement halts the robot immediately.
+All timed/distance movements are **interruptible** -- saying "stop" or any new command halts the robot immediately.
 
 ### Full Mode (`VOICE_MODE=openclaw`)
 
-Full orchestration (~2-5s latency) using OpenClaw Gateway.
+Full orchestration (~2-5s latency) using the OpenClaw Gateway. Supports multiple input channels.
 
 ```
-Voice/Text → OpenClaw Gateway (LLM + exec tool + skills)
+Voice/Text/WhatsApp → OpenClaw Gateway (LLM + exec tool + skills)
     → exec: curl -X POST http://localhost:8765/move ...
-    → bridge HTTP server (in-process)
-    → publish keyboard keys → WBC → G1 Robot
+    → bridge HTTP server
+    → keyboard keys → WBC → Robot
 
 OpenClaw → TTS-1 → voice reply (auto-TTS)
 ```
 
-Supports locomotion now. Future DiMOS navigation and GR00T VLA manipulation plug in as additional OpenClaw skills.
+**Input channels:**
+- **WebChat** — browser UI at http://127.0.0.1:18789
+- **Talk Mode** — voice input/output via the WebChat microphone
+- **WhatsApp** — send commands from your phone (requires `openclaw channels login --channel whatsapp`)
+
+The OpenClaw agent uses the `robot_control` skill which teaches it to send `curl` commands to the bridge. Future skills (SLAM/LiDAR navigation, VLA manipulation) plug in the same way.
 
 ## Bridge Server
 
-The bridge runs **in the same process** as the WBC control loop via `bridge/run_with_bridge.py`. This avoids CycloneDDS inter-process networking issues in Docker (the container's loopback interface doesn't support multicast).
+The bridge runs **in the same process** as the WBC control loop via `bridge/run_with_bridge.py`. This avoids CycloneDDS inter-process networking issues in Docker.
 
-The bridge translates HTTP velocity commands into keyboard key sequences published on the `/keyboard_input` ROS2 topic. The WBC's `G1GearWbcPolicy.handle_keyboard_button()` processes these keys (each press changes velocity by ±0.2 m/s).
+### Why in-process?
+
+The Docker container's loopback interface doesn't support multicast, so CycloneDDS (ROS2's default middleware) cannot route messages between separate processes. Running bridge + control loop in one process means the ROS2 publisher and subscriber share the same node -- no DDS networking needed.
+
+### Velocity → Key Translation
+
+The `/move` endpoint converts absolute velocities to keyboard key sequences:
+
+1. Publish `z` (reset all velocities to zero)
+2. Publish directional keys: `w`/`s` for vx, `a`/`d` for vy, `q`/`e` for vyaw
+3. Number of presses = `round(abs(velocity) / 0.2)`
+
+Example: `{"vx": 0.4}` → keys `['z', 'w', 'w']` → vx = 0.0 → 0.2 → 0.4
 
 ### HTTP API
 
 | Method | Endpoint | Body | Description |
 |--------|----------|------|-------------|
-| POST | `/move` | `{"vx": 0.4, "vy": 0.0, "vyaw": 0.0}` | Translate to key sequence: `z` (reset) + directional presses |
-| POST | `/stop` | (none) | Publish `z` key (zero all velocities) |
-| POST | `/activate` | (none) | Publish `]` key (activate walking policy) |
-| POST | `/deactivate` | (none) | Publish `o` key (deactivate policy) |
-| POST | `/key` | `{"key": "w"}` | Publish arbitrary keyboard key |
+| POST | `/move` | `{"vx": 0.4, "vy": 0.0, "vyaw": 0.0}` | Translate to key sequence |
+| POST | `/stop` | — | Publish `z` (zero all velocities) |
+| POST | `/activate` | — | Publish `]` (activate walking policy) |
+| POST | `/deactivate` | — | Publish `o` (deactivate policy) |
+| POST | `/key` | `{"key": "9"}` | Publish arbitrary key |
 | GET | `/status` | — | Current velocity and step size |
 
-### Velocity → Key Translation
+### Available Keys
 
-The `/move` endpoint converts absolute velocities to keyboard sequences:
-
-1. Always starts with `z` (reset all to zero)
-2. Then repeats directional keys: `w`/`s` for vx, `a`/`d` for vy, `q`/`e` for vyaw
-3. Number of presses = `round(abs(velocity) / 0.2)`
-
-Example: `{"vx": 0.4}` → keys `['z', 'w', 'w']` → vx = 0.0 → 0.2 → 0.4
+| Key | Action |
+|-----|--------|
+| `]` | Activate policy |
+| `o` | Deactivate policy |
+| `9` | Toggle release/hold |
+| `w`/`s` | Forward/backward velocity ±0.2 |
+| `a`/`d` | Strafe left/right ±0.2 |
+| `q`/`e` | Turn left/right ±0.2 |
+| `z` | Zero all velocities |
+| `1`/`2` | Raise/lower base height ±0.1 |
+| `n`/`m` | Decrease/increase gait frequency ±0.1 |
+| `3`-`8` | Torso roll/pitch/yaw ±10° |
 
 ## Deployment
 
-Everything runs on one laptop:
-
 | Location | Component | Port |
 |----------|-----------|------|
-| Docker container | `run_with_bridge.py` (bridge + WBC control loop, single process) | 8765 (exposed) |
-| Host | Realtime client (fast mode) | — |
+| Docker container | `run_with_bridge.py` (bridge + WBC, single process) | 8765 |
+| Host | Realtime API client (fast mode) | — |
 | Host | OpenClaw Gateway (full mode) | 18789 |
-| Cloud | OpenAI Realtime API | 443 |
-| Cloud | OpenAI TTS-1 (for OpenClaw) | 443 |
-| Network | G1 Robot | Unitree SDK |
+| Cloud | OpenAI Realtime API / TTS-1 | 443 |
+| Network | G1 Robot | Unitree SDK (192.168.123.x) |
 
-The WBC Docker container uses `--network host`, so port 8765 is automatically accessible from the host.
+## Speed Reference
 
-## Mock Mode
+| Label | Commanded (m/s) | Calibrated linear (m/s) | Calibrated yaw (rad/s) | Key presses |
+|-------|----------------|------------------------|----------------------|-------------|
+| slow | 0.2 | 0.18 | 0.20 | 1 |
+| medium | 0.4 | 0.35 | 0.40 | 2 |
+| fast | 0.6 | 0.50 | 0.55 | 3 |
 
-For development without Docker or the robot, run `uv run python bridge/mock_bridge.py` on the host. Same HTTP interface, prints commands to console.
+Calibrated values are used for distance-based ("walk 2 meters") and angle-based ("turn 90 degrees") duration calculations in the Realtime API client.
+
+## Future: GEAR-SONIC
+
+The GR00T-WholeBodyControl repo also contains **GEAR-SONIC** (`gear_sonic_deploy/`), a C++/TensorRT kinematic planner with 27 motion modes:
+
+| Category | Modes |
+|----------|-------|
+| Locomotion | idle, slowWalk, walk, run |
+| Ground | squat, kneelTwoLeg, kneelOneLeg, lyingFacedown, handCrawling, elbowCrawling |
+| Boxing | idleBoxing, walkBoxing, leftJab, rightJab, randomPunches, leftHook, rightHook |
+| Styled walks | happy, stealth, injured, careful, objectCarrying, crouch, happyDance, zombie, point, scared |
+
+GEAR-SONIC accepts commands via a ZMQ interface (`mode`, `movement_direction`, `facing_direction`, `speed`, `height`). It cannot run simultaneously with the Decoupled WBC (both write motor commands), but could serve as an alternative locomotion backend for expressive demos.
 
 ## Future Tasks
 
 | Task | Integration Point | What to Add |
 |------|-------------------|-------------|
-| Task 2 (VLA) | New OpenClaw skill + bridge endpoint | `vla-control` skill, extend bridge |
-| Task 3 (DiMOS) | New OpenClaw skill, uses existing `/move` endpoint | `dimos-navigation` skill |
-| Task 4 (DiMOS+VLA) | OpenClaw orchestrates both skills | No new code, just skill composition |
+| Task 2 (SLAM/LiDAR Nav) | New OpenClaw skill, waypoint API or `/move` | `slam-navigation` skill, LiDAR SLAM stack |
+| Task 3 (VLA + Nav + WBC) | OpenClaw orchestrates all skills | `vla-control` skill, vision pipeline |
+| GEAR-SONIC | Alternative bridge backend | ZMQ publisher, mode mapping |
 
 ## Configuration
-
-### Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -114,11 +178,3 @@ For development without Docker or the robot, run `uv run python bridge/mock_brid
 | `OPENAI_API_KEY` | (required) | Used by both modes |
 | `BRIDGE_URL` | `http://localhost:8765` | Bridge server address |
 | `LOG_LEVEL` | `INFO` | Logging verbosity |
-
-### Speed Reference
-
-| Label | Velocity (m/s) | Key presses | Distance→Duration Example |
-|-------|---------------|-------------|---------------------------|
-| slow | 0.2 | 1 press | 2m → 10.0s |
-| medium | 0.4 | 2 presses | 2m → 5.0s |
-| fast | 0.6 | 3 presses | 2m → 3.3s |
