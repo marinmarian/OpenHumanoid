@@ -10,7 +10,7 @@ Two switchable voice-control modes, both sharing a single HTTP bridge to the rob
 | Mode                             | Latency | Input                              | Capabilities                                                     |
 | -------------------------------- | ------- | ---------------------------------- | ---------------------------------------------------------------- |
 | **Fast** (`VOICE_MODE=realtime`) | ~500ms  | Voice (Realtime API)               | Locomotion: walk, turn, stop, distance/timed/sequential commands |
-| **Full** (`VOICE_MODE=openclaw`) | ~2-5s   | Voice + Text + WhatsApp (OpenClaw) | Full orchestration + future Navigation/VLA                       |
+| **Full** (`VOICE_MODE=openclaw`) | ~2-5s   | Voice + Text + WhatsApp (OpenClaw) | Full orchestration with SLAM/LiDAR navigation; VLA remains future |
 
 
 See [docs/architecture.md](docs/architecture.md) for the full architecture and data flow.
@@ -152,7 +152,7 @@ curl -X POST http://localhost:8765/move -H 'Content-Type: application/json' -d '
 curl -X POST http://localhost:8765/stop
 ```
 
-## Planning
+## Status
 
 
 | Task                                | Scope  | Description                                         |

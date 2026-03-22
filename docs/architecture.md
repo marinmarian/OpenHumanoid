@@ -83,7 +83,7 @@ OpenClaw → TTS-1 → voice reply (auto-TTS)
 - **Talk Mode** — voice input/output via the WebChat microphone
 - **WhatsApp** — send commands from your phone (requires `openclaw channels login --channel whatsapp`)
 
-The OpenClaw agent uses the `robot_control` skill which teaches it to send `curl` commands to the bridge. Future skills (SLAM/LiDAR navigation, VLA manipulation) plug in the same way.
+The OpenClaw agent uses the `robot_control` skill to send `curl` commands to the bridge, and the current orchestration layer also supports SLAM/LiDAR navigation. Future skills such as VLA manipulation plug in the same way.
 
 ## Bridge Server
 
@@ -162,11 +162,10 @@ The GR00T-WholeBodyControl repo also contains **GEAR-SONIC** (`gear_sonic_deploy
 
 GEAR-SONIC accepts commands via a ZMQ interface (`mode`, `movement_direction`, `facing_direction`, `speed`, `height`). It cannot run simultaneously with the Decoupled WBC (both write motor commands), but could serve as an alternative locomotion backend for expressive demos.
 
-## Future Tasks
+## Remaining Future Tasks
 
 | Task | Integration Point | What to Add |
 |------|-------------------|-------------|
-| Task 2 (SLAM/LiDAR Nav) | New OpenClaw skill, waypoint API or `/move` | `slam-navigation` skill, LiDAR SLAM stack |
 | Task 3 (VLA + Nav + WBC) | OpenClaw orchestrates all skills | `vla-control` skill, vision pipeline |
 | GEAR-SONIC | Alternative bridge backend | ZMQ publisher, mode mapping |
 

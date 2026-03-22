@@ -80,7 +80,7 @@ Mode is selected via `VOICE_MODE` env variable (`realtime` or `openclaw`).
 - [x] OpenClaw `robot_control` skill with correct bridge API
 - [ ] End-to-end testing with real robot
 - [ ] GEAR-SONIC integration (ZMQ bridge backend)
-- [ ] Task 2: SLAM/LiDAR navigation stack
+- [x] Task 2: SLAM/LiDAR navigation stack
 - [ ] Task 3: VLA + Navigation + WBC (full loco-manipulation)
 
 ## Conventions

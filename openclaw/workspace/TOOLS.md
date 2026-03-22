@@ -18,23 +18,23 @@ Things like:
 ```markdown
 ### Cameras
 
-- living-room → Main area, 180° wide angle
-- front-door → Entrance, motion-triggered
-
-### SSH
-
-- home-server → 192.168.1.100, user: admin
+- main-cam -> Intel RealSense depth camera mounted on the Unitree G1
+- main-cam uses -> primary camera for navigation, SLAM, and object perception
 
 ### TTS
 
-- Preferred voice: "Nova" (warm, slightly British)
+- Preferred voice style: Warm, confident, friendly, slightly playful
+- Speaking speed: Moderate
+- Default verbosity: Short
+- While moving: Keep speech minimal
+- During manipulation: Only brief status updates unless asked
 - Default speaker: Kitchen HomePod
 
 ### Personality Delivery
 
-- Spoken style: Cool, composed, lightly teasing
+- Spoken style: Calm, friendly, and self-assured
 - Safety tone: Short, clear, serious
-- Low-stakes tone: Dry humor is welcome, but keep it sparse
+- Low-stakes tone: Gentle dry humor is welcome, but never overdone
 ```
 
 ## Why Separate?

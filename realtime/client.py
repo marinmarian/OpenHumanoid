@@ -27,6 +27,7 @@ class RealtimeClient:
     def __init__(self, bridge_url: str = "http://localhost:8765"):
         self.bridge_url = bridge_url
         self.api_key = os.environ.get("OPENAI_API_KEY", "")
+        self.voice = os.environ.get("REALTIME_VOICE", "alloy")
         if not self.api_key:
             raise ValueError("OPENAI_API_KEY environment variable is required")
 
@@ -88,11 +89,14 @@ class RealtimeClient:
                             "silence_duration_ms": 500,
                         },
                     },
-                    "output": {"format": {"type": "audio/pcm", "rate": 24000}},
+                    "output": {
+                        "format": {"type": "audio/pcm", "rate": 24000},
+                        "voice": self.voice,
+                    },
                 },
             },
         }))
-        logger.info("Session configured with tools and VAD")
+        logger.info("Session configured with voice=%s, tools, and VAD", self.voice)
 
     async def _stream_audio(self):
         """Stream microphone audio to the Realtime API."""
