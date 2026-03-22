@@ -2,6 +2,20 @@
 
 Voice-controlled humanoid robot integrating **OpenClaw**, **SLAM/LiDAR Navigation**, and **GR00T WBC + VLA** for voice-driven locomotion and loco-manipulation on the Unitree G1.
 
+## Known Gaps (capability stack)
+
+The manipulation pipeline is architecturally wired end-to-end but has the following gaps before it works on real hardware:
+
+1. **Real perception — biggest gap.** `object_pose()` still returns from `DEFAULT_OBJECTS`. The entire pipeline runs on hardcoded positions. Until ZED + Grounding DINO is wired in, the grasp pose is computed from fake coordinates.
+
+2. **Hands disabled on real robot by default.** `scripts/start_bridge.sh:25` launches with `--no-with_hands` for the real robot. So `hand_controller = None`, `/hand/command` returns 503, and the pick sequence will always fail at the gripper step on the real robot. Remove `--no-with_hands` once hand hardware is confirmed working.
+
+3. **Frame transform is 2D.** `_transform_pose_to_base_frame` rotates only x/y by robot yaw — z passes through unchanged. This ignores the ZED camera's height offset above `base_link`. With real ZED data, z needs the camera-to-base extrinsic transform. Will require calibration.
+
+4. **Pick sequence blocks the HTTP thread ~5+ seconds.** `_execute_pick_sequence` runs synchronously: pregrasp (1.6s) + descend (1.0s) + grip (0.5s) + retreat (1.4s) ≈ 4.5s minimum. The capability server calls this via `_post_bridge_json` with a blocking HTTP request. Check the timeout on that call.
+
+5. **Verification in real mode still uses mock data.** `_verify_pick_execution` (real mode) calls `self.scene()` which returns `DEFAULT_OBJECTS`. The "is the object gone?" check will never confirm success on real hardware until real perception is wired in.
+
 ## How It Works
 
 Two switchable voice-control modes, both sharing a single HTTP bridge to the robot:
