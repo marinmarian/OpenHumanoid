@@ -13,13 +13,16 @@ fi
 
 VOICE_MODE="${VOICE_MODE:-realtime}"
 BRIDGE_URL="${BRIDGE_URL:-http://localhost:8765}"
+CAPABILITY_SERVER_URL="${CAPABILITY_SERVER_URL:-http://localhost:8787}"
 
 echo "=== OpenHumanoid Launch ==="
 echo "Mode: $VOICE_MODE"
 echo "Bridge: $BRIDGE_URL"
+echo "Capability stack: $CAPABILITY_SERVER_URL"
 echo ""
 
 # Check bridge is reachable
+
 echo "Checking bridge at $BRIDGE_URL/status ..."
 if curl -sf "$BRIDGE_URL/status" > /dev/null 2>&1; then
     echo "Bridge is running."
@@ -34,6 +37,14 @@ else
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
         exit 1
     fi
+fi
+
+echo "Checking capability stack at $CAPABILITY_SERVER_URL/status ..."
+if curl -sf "$CAPABILITY_SERVER_URL/status" > /dev/null 2>&1; then
+    echo "Capability stack is running."
+else
+    echo "WARNING: Capability stack not reachable at $CAPABILITY_SERVER_URL"
+    echo "Start it with: ./scripts/start_capability_server.sh"
 fi
 
 echo ""
