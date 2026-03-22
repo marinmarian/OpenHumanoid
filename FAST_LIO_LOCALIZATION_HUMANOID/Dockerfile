@@ -1,7 +1,7 @@
 # ============================================================
 # FAST_LIO_LOCALIZATION_HUMANOID — ROS2 Humble build
 # ============================================================
-FROM ros:humble-ros-base-jammy
+FROM osrf/ros:humble-desktop
 
 ENV DEBIAN_FRONTEND=noninteractive
 SHELL ["/bin/bash", "-c"]
@@ -96,5 +96,5 @@ RUN echo 'source /opt/ros/humble/setup.bash' >> /root/.bashrc && \
     echo 'source /root/ws_livox/install/setup.bash' >> /root/.bashrc && \
     echo 'source /root/ws_loc/install/setup.bash' >> /root/.bashrc
 
-ENTRYPOINT ["/ros_entrypoint.sh"]
+# ENTRYPOINT ["/ros_entrypoint.sh"]
 CMD ["bash"]

@@ -10,8 +10,8 @@
     map_file_path: "/root/ws_loc/src/FAST_LIO_LOCALIZATION_HUMANOID/data/scans_2697.pcd"
 
     common:
-      # lid_topic:  "/livox/lidar"
-      lid_topic: "/livox/custom_msg"
+      lid_topic:  "/livox/lidar"
+      # lid_topic: "/livox/custom_msg"
       imu_topic: "/livox/imu"
       time_sync_en: false # ONLY turn on when external time synchronization is really not possible
       time_offset_lidar_to_imu:
@@ -45,7 +45,7 @@
       scan_bodyframe_pub_en: true # true: output the point cloud scans in IMU-body-frame
 
     pcd_save:
-      pcd_save_en: true
+      pcd_save_en: false
       interval:
         -1 # how many LiDAR frames saved in each pcd file;
         # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.

@@ -4,23 +4,11 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: fast_lio_loc
-    # network_mode: host        # enable on Linux instead of ports mapping
+    network_mode: host        # enable on Linux instead of ports mapping
     privileged: true
     environment:
-      - DISPLAY=host.docker.internal:0
+      - DISPLAY=$DISPLAY
       - ROS_DOMAIN_ID=0
-    ports:
-      # Livox MID360 UDP ports (host <-> container)
-      - "56100:56100/udp"
-      - "56200:56200/udp"
-      - "56300:56300/udp"
-      - "56400:56400/udp"
-      - "56500:56500/udp"
-      - "56101:56101/udp"
-      - "56201:56201/udp"
-      - "56301:56301/udp"
-      - "56401:56401/udp"
-      - "56501:56501/udp"
     volumes:
       # Mount map data so you can swap maps without rebuilding
       - ./data:/root/ws_loc/src/FAST_LIO_LOCALIZATION_HUMANOID/data

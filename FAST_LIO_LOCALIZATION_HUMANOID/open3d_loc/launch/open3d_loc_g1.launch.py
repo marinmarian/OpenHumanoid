@@ -40,7 +40,7 @@ def generate_launch_description():
         package='tf2_ros',
         executable='static_transform_publisher',
         name='imulink2baselink',
-        arguments=['0', '0', '0', '0', '0', '0', '1', 'imu_link', 'base_link']
+        arguments=['0', '0', '0', '0', '0', '0', '-1', 'imu_link', 'base_link']
     )
 
     # 静态TF发布节点 - base_link to motion_link
