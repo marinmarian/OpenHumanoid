@@ -20,6 +20,17 @@ class CapabilityHandler(BaseHTTPRequestHandler):
             self._respond(200, self.state.localization_status())
         elif self.path == "/navigation/status":
             self._respond(200, self.state.navigation_status())
+        elif self.path == "/perception/raw-capture":
+            try:
+                png_bytes = self.state.raw_capture()
+            except Exception as exc:
+                self._respond(500, {"ok": False, "error": str(exc)})
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(png_bytes)))
+            self.end_headers()
+            self.wfile.write(png_bytes)
         else:
             self._respond(404, {"ok": False, "error": f"Unknown endpoint: {self.path}"})
 

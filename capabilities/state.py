@@ -378,6 +378,10 @@ class CapabilityState:
         self.save()
         return {"ok": True, "navigation": to_dict(self.navigation)}
 
+    def raw_capture(self) -> bytes:
+        """Capture a single frame from the perception backend and return PNG bytes."""
+        return self.perception_backend.raw_capture()
+
     def scene(self, payload: dict[str, Any]) -> dict[str, Any]:
         try:
             self.last_scene = self.perception_backend.observe_scene(

@@ -52,6 +52,7 @@ The YOLO and OpenAI VLM backends are both routed through the same HTTP detector 
 - A Unitree G1 robot connected via Ethernet (or use mock mode for dev)
 - An [OpenAI API key](https://platform.openai.com/api-keys) with Realtime API access
 - A working microphone and speaker (for voice modes)
+- **ZED camera perception:** [ZED SDK](https://www.stereolabs.com/developers/release) must be installed on the host (see below)
 
 ## Quick Start
 
@@ -214,6 +215,7 @@ The prototype autonomy stack runs as a local HTTP server on port `8787` by defau
 
 Key endpoints:
 
+- `GET  /perception/raw-capture` — returns a PNG image directly from the ZED camera
 - `POST /maps/build`
 - `POST /maps/load`
 - `POST /localization/initialize`

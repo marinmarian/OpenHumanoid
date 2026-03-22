@@ -29,6 +29,10 @@ class BasePerceptionBackend:
     def describe(self) -> dict[str, Any]:
         raise NotImplementedError
 
+    def raw_capture(self) -> bytes:
+        """Capture a single frame and return it as PNG bytes."""
+        raise NotImplementedError("raw_capture is not supported by this backend.")
+
     def observe_scene(
         self,
         payload: dict[str, Any],
@@ -158,6 +162,19 @@ class ZedStereoPerceptionBackend(BasePerceptionBackend):
             "runtime_error": self._last_runtime_error,
             "detector_backend": self.detector_backend.describe(),
         }
+
+    def raw_capture(self) -> bytes:
+        image, _point_cloud = self._capture_frame()
+        rgb = np.ascontiguousarray(image[..., :3][:, :, ::-1])
+        try:
+            from PIL import Image as _PILImage
+        except ImportError as exc:
+            raise RuntimeError("Pillow is required for raw_capture. Install with 'uv sync'.") from exc
+        import io
+        pil_img = _PILImage.fromarray(rgb)
+        buf = io.BytesIO()
+        pil_img.save(buf, format="PNG")
+        return buf.getvalue()
 
     def observe_scene(
         self,
