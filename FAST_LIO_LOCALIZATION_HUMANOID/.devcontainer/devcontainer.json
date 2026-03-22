@@ -1,0 +1,87 @@
+{
+    "name": "g1_user-devcontainer",
+    // Uncomment ``build`` and comment out ``image`` to build from source
+    "build": {
+        "dockerfile": "Dockerfile",
+        "context": "../"
+    },
+    "initializeCommand": "xhost +local:docker",
+    "postCreateCommand": "sudo chmod a+w /commandhistory/.bash_history",
+    "containerEnv": {
+        "DISPLAY": "${localEnv:DISPLAY}",
+        "QT_X11_NO_MITSHM": "1",
+        // Handling ssh connection.
+        "SSH_AUTH_SOCK": "/run/user/${localEnv:LOCAL_USER_ID}/keyring/ssh",
+        // NVIDIA related ENV variables make no difference
+        // in case no discrete GPU is present in the system
+        "NVIDIA_DRIVER_CAPABILITIES": "all",
+        "__NV_PRIME_RENDER_OFFLOAD": "1",
+        "__GLX_VENDOR_LIBRARY_NAME": "nvidia",
+    },
+    "remoteUser": "g1_user",
+    "privileged": true,
+    "mounts": [
+        // Enable screen access
+        {
+            "source": "/tmp/.X11-unix",
+            "target": "/tmp/.X11-unix",
+            "type": "bind"
+        },
+        {
+            "source": "/dev/dri",
+            "target": "/dev/dri",
+            "type": "bind"
+        },
+        // Presist bash history
+        {
+            "source": "${localWorkspaceFolderBasename}-bashhistory",
+            "target": "/commandhistory",
+            "type": "volume"
+        }
+
+    ],
+    "workspaceFolder": "/home/g1_user/ros2_ws/src",
+    "workspaceMount": "source=${localWorkspaceFolder},target=/home/g1_user/ros2_ws/src,type=bind,consistency=cached",
+    "runArgs": [
+        "--ipc=host",
+        "--net=host",
+        "--device-cgroup-rule", "c 81:* rmw",
+        "--device-cgroup-rule", "c 198:* rmw"
+    ],
+    "hostRequirements": {
+        "gpu": "optional"
+    },
+    "customizations": {
+        "vscode": {
+            "settings": {
+                "terminal.integrated.profiles.linux": {
+                    "bash": {
+                        "path": "bash"
+                    }
+                },
+                "terminal.integrated.defaultProfile.linux": "bash",
+                // Disable automatic port forwarding
+                "remote.autoForwardPorts": false,
+                "remote.restoreForwardedPorts": false
+            },
+            "extensions": [
+                "ms-vscode.cpptools-extension-pack",
+                "ms-python.python",
+                "ms-python.black-formatter",
+                "ms-python.isort",
+                "ms-toolsai.jupyter",
+                "ms-iot.vscode-ros",
+                "redhat.vscode-yaml",
+                "redhat.vscode-xml",
+                "twxs.cmake",
+                "ajshort.msg",
+                "xaver.clang-format",
+                "njpwerner.autodocstring",
+                "cschlosser.doxdocgen",
+                "streetsidesoftware.code-spell-checker",
+                "Ranch-Hand-Robotics.rde-ros-2",
+                "Ranch-Hand-Robotics.urdf-editor"
+            ]
+        }
+    }
+}
