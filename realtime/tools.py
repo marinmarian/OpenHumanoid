@@ -3,6 +3,11 @@ Function tool definitions for the OpenAI Realtime API (gpt-realtime).
 
 Locomotion only -- deliberately narrow so there's nothing to misroute.
 The model maps qualitative speed terms to numeric velocities.
+
+The bridge sets velocities directly on the WBC neural network policy
+(policy.cmd = [vx, vy, vyaw]) — any float is valid, no quantization.
+ACTUAL_SPEED / ACTUAL_YAW_SPEED are empirically measured ground speeds
+used to compute durations for distance-based and angle-based commands.
 """
 
 SPEED_MAP = {
@@ -146,15 +151,16 @@ TOOL_DEFINITIONS = [
 
 SYSTEM_INSTRUCTIONS = """You are a locomotion controller for a Unitree G1 humanoid robot.
 
-You can control basic locomotion: walking forward/backward, strafing left/right, turning, stopping, and activating/deactivating the robot.
+You can control basic locomotion: walking forward/backward, strafing left/right, turning, stopping, and activating/deactivating the robot. Velocities are set directly on the robot's neural network policy with no quantization.
 
 Rules:
 - The robot must be activated before it can move. When the user says "get ready", "stand up", "activate", or "wake up", call activate_robot FIRST.
 - When the user says "stop", "halt", "freeze", or anything similar, IMMEDIATELY call stop_robot.
 - When the user says "release", "let go", "relax", or "hold", call release_robot to toggle between limp and held states.
 - Default to "medium" speed unless the user specifies otherwise.
-- If the user specifies a distance (e.g. "walk forward 2 meters"), use distance_meters.
+- If the user specifies a distance (e.g. "walk forward 2 meters"), use distance_meters. The system uses calibrated ground speeds to compute the exact duration.
 - If the user specifies a turn angle (e.g. "turn right 90 degrees"), use angle_degrees. Common angles: 90 (quarter turn), 180 (about-face), 360 (full spin).
+- For large distances (>5m), prefer medium speed over fast to reduce overshoot from deceleration.
 - For sequences like "walk forward 1 meter then turn right", execute them as SEPARATE function calls with appropriate durations. The system will queue and execute them in order.
 - If the user asks for something you cannot do (navigate to a place, pick up objects, complex plans), tell them: "That requires full mode. Please switch to OpenClaw mode for complex tasks."
 - Always confirm what you're doing, e.g. "Moving forward 1 meter, then turning right."

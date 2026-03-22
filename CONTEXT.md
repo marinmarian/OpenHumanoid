@@ -4,7 +4,7 @@
 
 ## Project Purpose
 
-Voice-controlled locomotion for a Unitree G1 humanoid robot. Two switchable modes: a fast path (OpenAI Realtime API, ~500ms, locomotion only) and a full path (OpenClaw Gateway, ~2-5s, full orchestration with TTS and multi-channel input). Both share a single HTTP bridge that translates velocity commands into keyboard events for the WBC policy.
+Voice-controlled locomotion for a Unitree G1 humanoid robot. Two switchable modes: a fast path (OpenAI Realtime API, ~500ms, locomotion only) and a full path (OpenClaw Gateway, ~2-5s, full orchestration with TTS and multi-channel input). Both share a single HTTP bridge that sets velocities directly on the WBC policy's `cmd` array via a monkey-patched policy reference.
 
 The fast path supports: activate ("get ready"), continuous ("walk forward"), timed ("walk forward for 3 seconds"), distance-based ("walk forward 2 meters"), angle-based ("turn left 90 degrees"), sequential chains ("walk forward 1 meter then turn right"), and release/hold ("relax"). All timed movements are interruptible.
 
@@ -13,11 +13,11 @@ The full path (OpenClaw) supports voice (Talk Mode), text (WebChat), and WhatsAp
 ## Architecture
 
 ```
-Fast mode:  Mic → Realtime API → function call → HTTP → run_with_bridge.py → /keyboard_input → WBC → G1
+Fast mode:  Mic → Realtime API → function call → HTTP → run_with_bridge.py → policy.cmd → WBC → G1
 Full mode:  Voice/Text/WhatsApp → OpenClaw → exec curl → bridge and capability stack APIs → WBC / autonomy services → G1
 ```
 
-The bridge and WBC control loop run in the **same Python process** (`bridge/run_with_bridge.py`) to avoid CycloneDDS inter-process networking issues in Docker. The bridge publishes keyboard key strings to `/keyboard_input`, and the control loop's `ROSKeyboardDispatcher` receives them on the same ROS2 node.
+The bridge and WBC control loop run in the **same Python process** (`bridge/run_with_bridge.py`) to avoid CycloneDDS inter-process networking issues in Docker. The bridge monkey-patches `get_wbc_policy()` to capture the policy object, then writes velocities directly to `policy.lower_body_policy.cmd`. Keyboard events via `/keyboard_input` are still used for non-velocity actions (activate, deactivate, release/hold, base height, gait frequency).
 
 Mode is selected via `VOICE_MODE` env variable (`realtime` or `openclaw`).
 
@@ -47,11 +47,11 @@ Mode is selected via `VOICE_MODE` env variable (`realtime` or `openclaw`).
 
 | Constant | Value | Source |
 |----------|-------|--------|
-| Velocity step per keypress | 0.2 m/s | `G1GearWbcPolicy.handle_keyboard_button()` |
-| Keyboard input topic | `/keyboard_input` | `decoupled_wbc/control/main/constants.py` |
 | Bridge HTTP port | 8765 | Configurable via `--port` and `BRIDGE_URL` |
 | OpenClaw Gateway port | 18789 | `openclaw.json` / systemd service |
 | Capability stack port | 8787 | `capabilities/server.py` / `CAPABILITY_SERVER_PORT` |
+| Keyboard input topic | `/keyboard_input` | Used for activate/deactivate/key only |
+| `policy.cmd` format | `[vx, vy, vyaw]` float array | Direct assignment via monkey-patch |
 | Speed: slow | 0.2 m/s commanded, 0.18 m/s calibrated | `realtime/tools.py` |
 | Speed: medium | 0.4 m/s commanded, 0.35 m/s calibrated | `realtime/tools.py` |
 | Speed: fast | 0.6 m/s commanded, 0.50 m/s calibrated | `realtime/tools.py` |
@@ -61,7 +61,7 @@ Mode is selected via `VOICE_MODE` env variable (`realtime` or `openclaw`).
 
 ## External Dependencies
 
-- **Decoupled WBC**: Python-based whole-body controller from NVIDIA GR00T-WholeBodyControl repo. Runs in Docker (`decoupled_wbc-bash-root`) with ROS2. Uses `ROSKeyboardDispatcher` when started with `--keyboard-dispatcher-type ros` (forced by `run_with_bridge.py`).
+- **Decoupled WBC**: Python-based whole-body controller from NVIDIA GR00T-WholeBodyControl repo. Runs in Docker (`decoupled_wbc-bash-root`) with ROS2. The bridge monkey-patches its policy factory to capture the `wbc_policy` reference for direct velocity control. `ROSKeyboardDispatcher` (forced via `--keyboard-dispatcher-type ros`) is still used for non-velocity key events.
 - **GEAR-SONIC** (alternative): C++/TensorRT kinematic planner in the same repo (`gear_sonic_deploy/`). 27 motion modes (walk, run, squat, crawl, box, dance, etc.). Accepts commands via ZMQ. Cannot run simultaneously with Decoupled WBC.
 - **OpenAI Realtime API**: `wss://api.openai.com/v1/realtime?model=gpt-realtime`. WebSocket, PCM16 audio, native function calling, server-side VAD.
 - **OpenClaw Gateway**: Node.js AI agent gateway. `exec` tool runs shell commands on the gateway host. Skills teach the LLM what commands to run. TTS-1 for voice output. Supports WebChat, Talk Mode, WhatsApp.
@@ -69,7 +69,7 @@ Mode is selected via `VOICE_MODE` env variable (`realtime` or `openclaw`).
 ## Design Decisions
 
 - **In-process bridge**: `run_with_bridge.py` starts the HTTP server and control loop in one Python process. CycloneDDS in the Docker container can't do inter-process multicast on loopback, so separate processes can't communicate via ROS2 topics.
-- **Keyboard-based control**: The bridge translates HTTP velocities into keyboard key sequences (`z` to reset, then directional presses). This matches `G1GearWbcPolicy.handle_keyboard_button()` which increments velocity by ±0.2 per keypress. A better approach exists (publishing `navigate_cmd` to `CONTROL_GOAL_TOPIC` for direct velocity control with interpolation) but the keyboard path was simpler to wire up.
+- **Direct policy.cmd control**: The bridge writes `[vx, vy, vyaw]` directly to `G1GearWbcPolicy.lower_body_policy.cmd` — the neural network input vector. This avoids the 0.2 m/s quantization of the old keyboard emulation approach. The policy reference is captured at startup by monkey-patching `get_wbc_policy()` in `decoupled_wbc.control.policy.wbc_policy_factory`, keeping all GR00T code unmodified.
 - **HTTP everywhere**: Fast mode talks HTTP to the bridge; full mode talks HTTP to both the bridge and the capability stack. Simple, debuggable with curl, works across Docker boundary.
 - **Map once, then localize**: The capability stack persists named maps and blocks autonomous navigation until localization is initialized against a saved map.
 - **Two independent modes**: No delegation between Realtime API and OpenClaw. Switch via env variable.
@@ -95,7 +95,7 @@ Mode is selected via `VOICE_MODE` env variable (`realtime` or `openclaw`).
 ## Conventions
 
 - Python 3.10+, managed with `uv` (`uv sync` to install, `uv run` to execute)
-- Bridge server has zero external dependencies (stdlib + rclpy)
+- Bridge server depends on stdlib + rclpy + WBC modules (runs inside the WBC Docker container)
 - Host-side dependencies declared in `pyproject.toml`: websockets, sounddevice, numpy, requests, python-dotenv
 - API keys via environment variables, never hardcoded
 - OpenClaw config lives in `openclaw/`, symlinked to `~/.openclaw/` by `setup.sh` (uses `ln -sfn` to avoid recursive symlinks)

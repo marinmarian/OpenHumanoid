@@ -11,25 +11,10 @@ import argparse
 import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-VEL_STEP = 0.2
-
 last_cmd = {"vx": 0.0, "vy": 0.0, "vyaw": 0.0}
 last_arm_cmd = {"ok": False, "message": "No arm command issued yet.", "mock": True}
 last_hand_cmd = {"ok": False, "message": "No hand command issued yet.", "mock": True}
 last_pick_sequence = {"ok": False, "message": "No pick sequence executed yet.", "mock": True}
-
-
-def _velocity_to_keys(vx: float, vy: float, vyaw: float) -> list[str]:
-    keys = ["z"]
-
-    def _repeat(pos_key: str, neg_key: str, value: float):
-        n = round(abs(value) / VEL_STEP)
-        return [pos_key if value > 0 else neg_key] * n
-
-    keys += _repeat("w", "s", vx)
-    keys += _repeat("a", "d", vy)
-    keys += _repeat("q", "e", vyaw)
-    return keys
 
 
 def _read_body(handler: BaseHTTPRequestHandler) -> dict:
@@ -59,14 +44,13 @@ class MockHandler(BaseHTTPRequestHandler):
             vx = float(data.get("vx", 0.0))
             vy = float(data.get("vy", 0.0))
             vyaw = float(data.get("vyaw", 0.0))
-            keys = _velocity_to_keys(vx, vy, vyaw)
             last_cmd = {"vx": vx, "vy": vy, "vyaw": vyaw}
-            print(f"[MOCK] MOVE  vx={vx:.2f}  vy={vy:.2f}  vyaw={vyaw:.2f}  -> keys={keys}")
+            print(f"[MOCK] MOVE  vx={vx:.2f}  vy={vy:.2f}  vyaw={vyaw:.2f} (direct)")
             _respond(self, 200, {"ok": True, "vx": vx, "vy": vy, "vyaw": vyaw})
 
         elif self.path == "/stop":
             last_cmd = {"vx": 0.0, "vy": 0.0, "vyaw": 0.0}
-            print("[MOCK] STOP -> key='z'")
+            print("[MOCK] STOP (direct)")
             _respond(self, 200, {"ok": True, "stopped": True})
 
         elif self.path == "/activate":
@@ -202,10 +186,11 @@ class MockHandler(BaseHTTPRequestHandler):
                     "last_arm_cmd": last_arm_cmd,
                     "last_hand_cmd": last_hand_cmd,
                     "last_pick_sequence": last_pick_sequence,
+                    "actual_cmd": [last_cmd["vx"], last_cmd["vy"], last_cmd["vyaw"]],
                     "arm_endpoint_ready": True,
                     "hand_endpoint_ready": True,
                     "mock": True,
-                    "vel_step": VEL_STEP,
+                    "policy_connected": True,
                 },
             )
         else:

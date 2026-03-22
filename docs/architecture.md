@@ -2,7 +2,7 @@
 
 ## Overview
 
-OpenHumanoid provides voice-controlled locomotion for a Unitree G1 humanoid robot. Two switchable modes share a single HTTP bridge that translates velocity commands into keyboard events for the WBC's `G1GearWbcPolicy`.
+OpenHumanoid provides voice-controlled locomotion for a Unitree G1 humanoid robot. Two switchable modes share a single HTTP bridge that sets velocities directly on the WBC's `G1GearWbcPolicy.cmd` via a monkey-patched policy reference.
 
 ## System Diagram
 
@@ -27,8 +27,8 @@ OpenHumanoid provides voice-controlled locomotion for a Unitree G1 humanoid robo
 │  │  run_with_bridge.py (single process)                        │    │
 │  │  ┌──────────────────┐    ┌────────────────────────────┐    │    │
 │  │  │ HTTP Bridge      │    │ WBC Control Loop           │    │    │
-│  │  │ :8765            │───▶│ ROSKeyboardDispatcher      │    │    │
-│  │  │ /move /stop      │    │ → G1GearWbcPolicy          │    │    │
+│  │  │ :8765            │───▶│ G1GearWbcPolicy            │    │    │
+│  │  │ /move → cmd      │    │   (direct policy.cmd set)  │    │    │
 │  │  │ /activate /key   │    │ → MuJoCo sim / Real robot  │    │    │
 │  │  └──────────────────┘    └────────────────────────────┘    │    │
 │  └─────────────────────────────────────────────────────────────┘    │
@@ -45,8 +45,9 @@ Low-latency voice control (~500ms) using the OpenAI Realtime API with native fun
 Microphone → OpenAI Realtime API (WebSocket, gpt-realtime)
     → function call (move_robot / stop_robot / turn_robot / activate_robot / release_robot)
     → HTTP POST to bridge
-    → keyboard keys published to /keyboard_input ROS2 topic
-    → G1GearWbcPolicy.handle_keyboard_button() → WBC → Robot
+    → /move, /stop: direct policy.cmd assignment (no quantization)
+    → /activate, /key: keyboard event via /keyboard_input ROS2 topic
+    → WBC → Robot
     
 Realtime API → voice reply → Speaker
 ```
@@ -72,8 +73,7 @@ Full orchestration (~2-5s latency) using the OpenClaw Gateway. Supports multiple
 ```
 Voice/Text/WhatsApp → OpenClaw Gateway (LLM + exec tool + skills)
     → exec: curl -X POST http://localhost:8765/move ...
-    → bridge HTTP server
-    → keyboard keys → WBC → Robot
+    → bridge HTTP server → direct policy.cmd → WBC → Robot
 
 OpenClaw → TTS-1 → voice reply (auto-TTS)
 ```
@@ -104,38 +104,35 @@ The bridge runs **in the same process** as the WBC control loop via `bridge/run_
 
 The Docker container's loopback interface doesn't support multicast, so CycloneDDS (ROS2's default middleware) cannot route messages between separate processes. Running bridge + control loop in one process means the ROS2 publisher and subscriber share the same node -- no DDS networking needed.
 
-### Velocity → Key Translation
+### Direct Velocity Control
 
-The `/move` endpoint converts absolute velocities to keyboard key sequences:
+The `/move` and `/stop` endpoints write directly to `G1GearWbcPolicy.lower_body_policy.cmd`, a 3-element array `[vx, vy, vyaw]` that feeds the locomotion neural network. Any float value is accepted — there is no quantization.
 
-1. Publish `z` (reset all velocities to zero)
-2. Publish directional keys: `w`/`s` for vx, `a`/`d` for vy, `q`/`e` for vyaw
-3. Number of presses = `round(abs(velocity) / 0.2)`
+The bridge captures the policy object at startup by monkey-patching `get_wbc_policy()` in the WBC policy factory module. This avoids modifying any GR00T-WholeBodyControl code.
 
-Example: `{"vx": 0.4}` → keys `['z', 'w', 'w']` → vx = 0.0 → 0.2 → 0.4
+Other endpoints (`/activate`, `/deactivate`, `/key`) still publish keyboard events via the `/keyboard_input` ROS2 topic for actions that don't map to velocity (policy activation, release/hold toggle, base height, gait frequency, torso posture).
 
 ### HTTP API
 
 | Method | Endpoint | Body | Description |
 |--------|----------|------|-------------|
-| POST | `/move` | `{"vx": 0.4, "vy": 0.0, "vyaw": 0.0}` | Translate to key sequence |
-| POST | `/stop` | — | Publish `z` (zero all velocities) |
-| POST | `/activate` | — | Publish `]` (activate walking policy) |
-| POST | `/deactivate` | — | Publish `o` (deactivate policy) |
+| POST | `/move` | `{"vx": 0.4, "vy": 0.0, "vyaw": 0.0}` | Set velocity directly on policy.cmd |
+| POST | `/stop` | — | Zero all velocities (direct) |
+| POST | `/activate` | — | Activate walking policy (key `]`) |
+| POST | `/deactivate` | — | Deactivate policy (key `o`) |
 | POST | `/key` | `{"key": "9"}` | Publish arbitrary key |
-| GET | `/status` | — | Current velocity and step size |
+| POST | `/arm/pose` | `{"active_arm":"right","wrist_pose":[...]}` | Move wrist via IK solver |
+| POST | `/hand/command` | `{"active_arm":"right","posture":"grasp"}` | Open/close hand |
+| POST | `/manipulation/pick_sequence` | `{pregrasp/grasp/retreat poses}` | Staged pick pipeline |
+| GET | `/status` | — | Current velocity, policy state, endpoint readiness |
 
-### Available Keys
+### Available Keys (via `/key` endpoint)
 
 | Key | Action |
 |-----|--------|
 | `]` | Activate policy |
 | `o` | Deactivate policy |
 | `9` | Toggle release/hold |
-| `w`/`s` | Forward/backward velocity ±0.2 |
-| `a`/`d` | Strafe left/right ±0.2 |
-| `q`/`e` | Turn left/right ±0.2 |
-| `z` | Zero all velocities |
 | `1`/`2` | Raise/lower base height ±0.1 |
 | `n`/`m` | Decrease/increase gait frequency ±0.1 |
 | `3`-`8` | Torso roll/pitch/yaw ±10° |
@@ -152,13 +149,13 @@ Example: `{"vx": 0.4}` → keys `['z', 'w', 'w']` → vx = 0.0 → 0.2 → 0.4
 
 ## Speed Reference
 
-| Label | Commanded (m/s) | Calibrated linear (m/s) | Calibrated yaw (rad/s) | Key presses |
-|-------|----------------|------------------------|----------------------|-------------|
-| slow | 0.2 | 0.18 | 0.20 | 1 |
-| medium | 0.4 | 0.35 | 0.40 | 2 |
-| fast | 0.6 | 0.50 | 0.55 | 3 |
+| Label | Commanded (m/s) | Calibrated linear (m/s) | Calibrated yaw (rad/s) |
+|-------|----------------|------------------------|----------------------|
+| slow | 0.2 | 0.18 | 0.20 |
+| medium | 0.4 | 0.35 | 0.40 |
+| fast | 0.6 | 0.50 | 0.55 |
 
-Calibrated values are used for distance-based ("walk 2 meters") and angle-based ("turn 90 degrees") duration calculations in the Realtime API client.
+Calibrated values are empirically measured ground speeds used for distance-based ("walk 2 meters") and angle-based ("turn 90 degrees") duration calculations. The commanded velocity is set directly on `policy.cmd` — any float value is valid, not just these presets.
 
 ## Future: GEAR-SONIC
 

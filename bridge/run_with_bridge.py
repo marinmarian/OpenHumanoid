@@ -28,28 +28,16 @@ from scipy.spatial.transform import Rotation as R
 from std_msgs.msg import String
 
 KEYBOARD_INPUT_TOPIC = "/keyboard_input"
-VEL_STEP = 0.2
 
 key_pub = None
 _node = None
+_wbc_policy = None
 arm_controller = None
 hand_controller = None
 _last_cmd = {"vx": 0.0, "vy": 0.0, "vyaw": 0.0}
 _last_arm_cmd = {"ok": False, "message": "No arm command issued yet."}
 _last_hand_cmd = {"ok": False, "message": "No hand command issued yet."}
 _last_pick_sequence = {"ok": False, "message": "No pick sequence executed yet."}
-
-# #region agent log
-_DEBUG_LOG = "/root/Projects/GR00T-WholeBodyControl/debug_df55b2.log"
-def _dlog(hypothesis, location, message, data=None):
-    import json as _j, time as _t
-    try:
-        with open(_DEBUG_LOG, "a") as _f:
-            _f.write(_j.dumps({"sessionId":"df55b2","hypothesisId":hypothesis,"location":location,"message":message,"data":data or {},"timestamp":int(_t.time()*1000)}) + "\n")
-            _f.flush()
-    except Exception:
-        pass
-# #endregion
 
 
 class ArmIKController:
@@ -339,23 +327,17 @@ def _execute_pick_sequence(payload: dict) -> dict:
 
 
 def publish_key(key: str):
-    _dlog("H5", "run_with_bridge.py:publish_key", "publishing key", {"key": key, "pub_is_none": key_pub is None})
     msg = String()
     msg.data = key
     key_pub.publish(msg)
 
 
-def velocity_to_keys(vx: float, vy: float, vyaw: float) -> list[str]:
-    keys = ["z"]
-
-    def _repeat(pos_key: str, neg_key: str, value: float):
-        n = round(abs(value) / VEL_STEP)
-        return [pos_key if value > 0 else neg_key] * n
-
-    keys += _repeat("w", "s", vx)
-    keys += _repeat("a", "d", vy)
-    keys += _repeat("q", "e", vyaw)
-    return keys
+def _set_velocity(vx: float, vy: float, vyaw: float):
+    """Set locomotion velocity directly on the WBC policy (no quantization)."""
+    lb = _wbc_policy.lower_body_policy
+    lb.cmd[0] = vx
+    lb.cmd[1] = vy
+    lb.cmd[2] = vyaw
 
 
 def _read_body(handler: BaseHTTPRequestHandler) -> dict:
@@ -385,17 +367,15 @@ class BridgeHandler(BaseHTTPRequestHandler):
             vx = float(data.get("vx", 0.0))
             vy = float(data.get("vy", 0.0))
             vyaw = float(data.get("vyaw", 0.0))
-            keys = velocity_to_keys(vx, vy, vyaw)
-            for k in keys:
-                publish_key(k)
+            _set_velocity(vx, vy, vyaw)
             _last_cmd = {"vx": vx, "vy": vy, "vyaw": vyaw}
-            print(f"[BRIDGE] MOVE vx={vx:.2f} vy={vy:.2f} vyaw={vyaw:.2f} -> keys={keys}")
+            print(f"[BRIDGE] MOVE vx={vx:.2f} vy={vy:.2f} vyaw={vyaw:.2f} (direct)")
             _respond(self, 200, {"ok": True, "vx": vx, "vy": vy, "vyaw": vyaw})
 
         elif self.path == "/stop":
-            publish_key("z")
+            _set_velocity(0.0, 0.0, 0.0)
             _last_cmd = {"vx": 0.0, "vy": 0.0, "vyaw": 0.0}
-            print("[BRIDGE] STOP -> key='z'")
+            print("[BRIDGE] STOP (direct)")
             _respond(self, 200, {"ok": True, "stopped": True})
 
         elif self.path == "/activate":
@@ -464,18 +444,26 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/status":
+            actual_cmd = None
+            if _wbc_policy is not None:
+                try:
+                    lb = _wbc_policy.lower_body_policy
+                    actual_cmd = list(lb.cmd)
+                except Exception:
+                    pass
             _respond(
                 self,
                 200,
                 {
                     "ok": True,
                     "last_cmd": _last_cmd,
+                    "actual_cmd": actual_cmd,
                     "last_arm_cmd": _last_arm_cmd,
                     "last_hand_cmd": _last_hand_cmd,
                     "last_pick_sequence": _last_pick_sequence,
                     "arm_endpoint_ready": arm_controller is not None,
                     "hand_endpoint_ready": hand_controller is not None,
-                    "vel_step": VEL_STEP,
+                    "policy_connected": _wbc_policy is not None,
                 },
             )
         else:
@@ -521,46 +509,30 @@ def main():
     print(f"[BRIDGE] ROS2 publisher ready on {KEYBOARD_INPUT_TOPIC}", flush=True)
 
     time.sleep(0.5)
-    try:
-        ge = rclpy.get_global_executor()
-        ge_nodes = [n.get_name() for n in ge.get_nodes()] if ge else []
-    except Exception as ex:
-        ge_nodes = f"ERROR: {ex}"
-    _dlog(
-        "H1",
-        "run_with_bridge.py:main",
-        "ROS2 state after init+spin",
-        {
-            "rclpy_ok": rclpy.ok(),
-            "bridge_node_name": _node.get_name(),
-            "global_executor_nodes": ge_nodes,
-        },
-    )
 
     sys.argv = ["run_g1_control_loop.py"] + loop_args
     print(f"[BRIDGE] Launching control loop with args: {loop_args}", flush=True)
 
-    _dlog("H1", "run_with_bridge.py:main", "about to import control loop modules", {"loop_args": loop_args})
+    # Monkey-patch the WBC policy factory to capture the policy reference.
+    # This avoids modifying any GR00T code — we intercept the return value
+    # of get_wbc_policy() before the control loop module is even imported.
+    global _wbc_policy
+    import decoupled_wbc.control.policy.wbc_policy_factory as _policy_factory
+    _orig_get_wbc_policy = _policy_factory.get_wbc_policy
+
+    def _intercepted_get_wbc_policy(*args, **kwargs):
+        global _wbc_policy
+        _wbc_policy = _orig_get_wbc_policy(*args, **kwargs)
+        print("[BRIDGE] Captured WBC policy — direct velocity control ready", flush=True)
+        return _wbc_policy
+
+    _policy_factory.get_wbc_policy = _intercepted_get_wbc_policy
 
     import tyro
     from decoupled_wbc.control.main.teleop.configs.configs import ControlLoopConfig
     from decoupled_wbc.control.main.teleop.run_g1_control_loop import main as control_main
 
-    _dlog("H1", "run_with_bridge.py:main", "imports done, calling tyro.cli", {})
-
     config = tyro.cli(ControlLoopConfig)
-
-    _dlog(
-        "H1",
-        "run_with_bridge.py:main",
-        "config parsed, about to initialize bridge controllers",
-        {
-            "interface": config.interface,
-            "env_type": config.env_type,
-            "kbd_dispatcher": config.keyboard_dispatcher_type,
-            "with_hands": getattr(config, "with_hands", None),
-        },
-    )
 
     try:
         arm_controller = ArmIKController(config)

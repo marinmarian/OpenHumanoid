@@ -7,13 +7,9 @@ Voice-controlled humanoid robot integrating **OpenClaw**, **SLAM/LiDAR Navigatio
 The following gaps remain before the full pick pipeline works on real hardware:
 
 1. **Hands are opt-in on the real robot.** `scripts/start_bridge.sh` keeps `--no-with_hands` as the safe default. That means `hand_controller = None`, `/hand/command` returns 503, and the pick sequence will fail at the gripper step unless you start the bridge with `BRIDGE_WITH_HANDS=1 ./scripts/start_bridge.sh real`.
-
 2. **ZED extrinsics need calibration.** The perception backend supports camera-to-base extrinsics via `ZED_TO_BASE_{X,Y,Z,ROLL,PITCH,YAW}` env vars, but they default to zero. Until calibrated, real object poses will be inaccurate.
-
 3. **Pick sequence blocks the HTTP thread ~5+ seconds.** `_execute_pick_sequence` runs synchronously (~4.5s minimum). Check the timeout on the capability server's bridge call.
-
 4. **Navigation is scaffolded, not wired.** Map build/load/localize/navigate APIs exist and the state machine is complete, but no real LiDAR SLAM or path planner is connected yet.
-
 5. **Face recognition is stubbed.** Enrollment works but recognition returns a hardcoded match — no real face embedding model is wired.
 
 ## How It Works
@@ -21,13 +17,13 @@ The following gaps remain before the full pick pipeline works on real hardware:
 Two switchable voice-control modes, both sharing a single HTTP bridge to the robot:
 
 
-| Mode                             | Latency | Input                              | Capabilities                                                     |
-| -------------------------------- | ------- | ---------------------------------- | ---------------------------------------------------------------- |
-| **Fast** (`VOICE_MODE=realtime`) | ~500ms  | Voice (Realtime API)               | Locomotion: walk, turn, stop, distance/timed/sequential commands |
+| Mode                             | Latency | Input                              | Capabilities                                                           |
+| -------------------------------- | ------- | ---------------------------------- | ---------------------------------------------------------------------- |
+| **Fast** (`VOICE_MODE=realtime`) | ~500ms  | Voice (Realtime API)               | Locomotion: walk, turn, stop, distance/timed/sequential commands       |
 | **Full** (`VOICE_MODE=openclaw`) | ~2-5s   | Voice + Text + WhatsApp (OpenClaw) | Locomotion + prototype map/localize/navigate/perceive/manipulate stack |
 
 
-![Architecture](docs/architecture_diagram.png)
+Architecture
 
 See [docs/architecture.md](docs/architecture.md) for the full architecture and data flow, and [docs/capability_stack.md](docs/capability_stack.md) for the new map/localize/navigate/perceive/manipulate control plane.
 
@@ -35,12 +31,14 @@ See [docs/architecture.md](docs/architecture.md) for the full architecture and d
 
 The capability stack supports two real perception backends (plus a mock for development):
 
-| Backend | How it works | When to use |
-| ------- | ------------ | ----------- |
-| **mock** (default) | Returns hardcoded objects. No camera needed. | Development and testing without hardware |
-| **ZED + heuristics** | Live ZED RGB + point cloud. Detects flat surfaces and color-segmentable objects. | Quick smoke test with the camera plugged in |
-| **ZED + YOLO** | ZED frames sent to a local YOLO service (`scripts/detector_service.sh`). 2D boxes grounded into 3D via ZED point cloud. | Best accuracy for known object classes, no API cost |
+
+| Backend              | How it works                                                                                                            | When to use                                                              |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| **mock** (default)   | Returns hardcoded objects. No camera needed.                                                                            | Development and testing without hardware                                 |
+| **ZED + heuristics** | Live ZED RGB + point cloud. Detects flat surfaces and color-segmentable objects.                                        | Quick smoke test with the camera plugged in                              |
+| **ZED + YOLO**       | ZED frames sent to a local YOLO service (`scripts/detector_service.sh`). 2D boxes grounded into 3D via ZED point cloud. | Best accuracy for known object classes, no API cost                      |
 | **ZED + OpenAI VLM** | ZED frames sent to GPT-4o/4.1-mini. Open-vocabulary detection, bounding boxes grounded into 3D. Live-tested end-to-end. | Open-vocabulary queries ("the red mug on the left"), no local GPU needed |
+
 
 The YOLO and OpenAI VLM backends are both routed through the same HTTP detector service (`scripts/detector_service.py`) and are interchangeable — the 3D grounding and grasp planning pipeline is identical for both.
 
@@ -196,18 +194,47 @@ Open [http://127.0.0.1:18789](http://127.0.0.1:18789) for WebChat, or use Talk M
 
 ## Bridge HTTP API
 
+Base URL: `http://localhost:8765` (configurable via `BRIDGE_PORT`)
 
-| Method | Endpoint      | Body                                  | Description                                        |
-| ------ | ------------- | ------------------------------------- | -------------------------------------------------- |
-| POST   | `/move`       | `{"vx": 0.4, "vy": 0.0, "vyaw": 0.0}` | Set velocity (translated to key presses, step=0.2) |
-| POST   | `/stop`       | —                                     | Zero all velocities (key `z`)                      |
-| POST   | `/activate`   | —                                     | Activate walking policy (key `]`)                  |
-| POST   | `/deactivate` | —                                     | Deactivate policy (key `o`)                        |
-| POST   | `/key`        | `{"key": "9"}`                        | Publish arbitrary key (e.g. `9` = release/hold)    |
-| GET    | `/status`     | —                                     | Current velocity and step size                     |
+Velocities are written directly to the WBC neural network policy — any float value is accepted, no quantization.
+
+### Locomotion
 
 
-Speed reference: slow=0.2, medium=0.4, fast=0.6 m/s (1/2/3 key presses).
+| Method | Endpoint      | Example                                                                                                              | Description                                                        |
+| ------ | ------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| POST   | `/move`       | `curl -s -X POST http://localhost:8765/move -H 'Content-Type: application/json' -d '{"vx":0.4,"vy":0.0,"vyaw":0.0}'` | Set velocity `[vx, vy, vyaw]` directly on `policy.cmd`             |
+| POST   | `/stop`       | `curl -s -X POST http://localhost:8765/stop`                                                                         | Zero all velocities                                                |
+| POST   | `/activate`   | `curl -s -X POST http://localhost:8765/activate`                                                                     | Activate walking policy                                            |
+| POST   | `/deactivate` | `curl -s -X POST http://localhost:8765/deactivate`                                                                   | Deactivate policy                                                  |
+| POST   | `/key`        | `curl -s -X POST http://localhost:8765/key -H 'Content-Type: application/json' -d '{"key":"9"}'`                     | Send a raw key event (`9`=release/hold, `1`/`2`=base height, etc.) |
+
+
+Speed reference: slow=0.2, medium=0.4, fast=0.6 m/s.
+
+### Upper Body (arm + hand)
+
+Requires `BRIDGE_WITH_HANDS=1` for hand endpoints.
+
+
+| Method | Endpoint                      | Body                                                                                      | Description                                                             |
+| ------ | ----------------------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| POST   | `/arm/pose`                   | `{"active_arm":"right", "wrist_pose":[x,y,z,qw,qx,qy,qz], "move_time_s":1.5}`             | Move wrist to a Cartesian target via IK. 7 floats = one arm, 14 = both. |
+| POST   | `/hand/command`               | `{"active_arm":"right", "posture":"grasp", "gripper_width":0.08}`                         | Open/close hand. Postures: `open`, `release`, `close`, `grasp`.         |
+| POST   | `/manipulation/pick_sequence` | `{"active_arm":"right", "pregrasp_pose":[...], "grasp_pose":[...], "retreat_pose":[...]}` | Staged pick: open hand, pregrasp, descend, close hand, retreat.         |
+
+
+### Status
+
+
+| Method | Endpoint  | Description                                                                                     |
+| ------ | --------- | ----------------------------------------------------------------------------------------------- |
+| GET    | `/status` | Returns current velocity, actual `policy.cmd`, arm/hand readiness, and `policy_connected` flag. |
+
+
+```bash
+curl -s http://localhost:8765/status | python3 -m json.tool
+```
 
 ## Capability Stack API
 
@@ -245,10 +272,10 @@ curl -X POST http://localhost:8765/stop
 ## Planning
 
 
-| Task                                | Scope  | Description                                         |
-| ----------------------------------- | ------ | --------------------------------------------------- |
-| **Task 1 — OpenClaw + WBC**         | MVP    | Voice → locomotion pipeline via shared bridge       |
-| **Task 2 — SLAM/LiDAR Navigation**  | Tier 2 | Saved-map navigation stack scaffolded; real SLAM/nav adapters still to be wired |
+| Task                                | Scope  | Description                                                                                              |
+| ----------------------------------- | ------ | -------------------------------------------------------------------------------------------------------- |
+| **Task 1 — OpenClaw + WBC**         | MVP    | Voice → locomotion pipeline via shared bridge                                                            |
+| **Task 2 — SLAM/LiDAR Navigation**  | Tier 2 | Saved-map navigation stack scaffolded; real SLAM/nav adapters still to be wired                          |
 | **Task 3 — VLA + Navigation + WBC** | Tier 3 | Perception/manipulation orchestration scaffolded; real vision and arm control adapters still to be wired |
 
 
