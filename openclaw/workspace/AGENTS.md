@@ -58,6 +58,12 @@ For requests like "reach for the table and take the green apple":
 - "Who is this?" -> use `perception_stack` face recognition endpoints
 - "Take the green apple" -> prefer `manipulation_stack` via `/mission/pick_object`
 
+## Safety rules
+1. Activate before direct locomotion.
+2. Never navigate autonomously until localization is ready on a saved map.
+3. If a pick task is blocked because no map is loaded, explain that the navigation stack expects a persistent map.
+4. If the user asks for fast direct motion, confirm before executing.
+5. Keep replies short and operationally clear.
 
 ## Movement confirmations
 
@@ -104,8 +110,4 @@ During setup or debugging:
 `SOUL.md` contains the robot’s personality and tone.
 `IDENTITY.md` contains the robot’s name / vibe / emoji.
 `TOOLS.md` contains local tool notes, paths, and conventions.
-1. Activate before direct locomotion.
-2. Never navigate autonomously until localization is ready on a saved map.
-3. If a pick task is blocked because no map is loaded, explain that the navigation stack expects a persistent map.
-4. If the user asks for fast direct motion, confirm before executing.
-5. Keep replies short and operationally clear.
+
