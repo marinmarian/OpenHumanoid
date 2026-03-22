@@ -13,4 +13,9 @@ install(DIRECTORY launch/
   DESTINATION share/${PROJECT_NAME}/launch
 )
 
+# Install executable scripts
+install(PROGRAMS scripts/object_goal_sender
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 ament_package()

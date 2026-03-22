@@ -21,3 +21,41 @@ services:
     stdin_open: true
     tty: true
     command: bash
+
+  # ---- FoundationPoseROS2 — 6D object pose estimation ------
+  # Requires: NVIDIA GPU + nvidia-container-toolkit on the host.
+  # This service is behind a "gpu" profile — it does NOT build
+  # with the default `docker compose build`.
+  #
+  # Build & run on a Linux GPU machine:
+  #   docker compose --profile gpu build foundationpose
+  #   docker compose --profile gpu up -d foundationpose
+  # -----------------------------------------------------------
+  foundationpose:
+    profiles: ["gpu"]
+    build:
+      context: ./foundationpose
+      dockerfile: Dockerfile
+    container_name: foundation_pose
+    # network_mode: host   # enable on Linux for DDS autodiscovery
+    privileged: true
+    environment:
+      - DISPLAY=${DISPLAY:-:0}
+      - ROS_DOMAIN_ID=0
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      # Object mesh models (.obj / .stl) for detection
+      - ./foundationpose/demo_data:/app/FoundationPoseROS2/demo_data
+      # X11 forwarding
+      - /tmp/.X11-unix:/tmp/.X11-unix
+    stdin_open: true
+    tty: true
+    command: bash
