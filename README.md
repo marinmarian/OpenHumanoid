@@ -6,15 +6,15 @@ Voice-controlled humanoid robot integrating **OpenClaw**, **SLAM/LiDAR Navigatio
 
 The manipulation pipeline is architecturally wired end-to-end but has the following gaps before it works on real hardware:
 
-1. **Real perception — biggest gap.** `object_pose()` still returns from `DEFAULT_OBJECTS`. The entire pipeline runs on hardcoded positions. Until ZED + Grounding DINO is wired in, the grasp pose is computed from fake coordinates.
+1. **Real perception now has a ZED path, but detection is still the main gap.** In real-backend mode the capability stack now uses a live ZED stereo backend for `scene()` and `object_pose()`, grounds detections into 3D with the point cloud, and can fall back to heuristic tabletop/color segmentation. The remaining gap is robust detection quality: for anything beyond simple tabletop/color cases, you still need a real detector feeding 2D boxes or masks into the stack.
 
-2. **Hands disabled on real robot by default.** `scripts/start_bridge.sh:25` launches with `--no-with_hands` for the real robot. So `hand_controller = None`, `/hand/command` returns 503, and the pick sequence will always fail at the gripper step on the real robot. Remove `--no-with_hands` once hand hardware is confirmed working.
+2. **Hands are opt-in on the real robot.** `scripts/start_bridge.sh` keeps `--no-with_hands` as the safe default for the real robot. That means `hand_controller = None`, `/hand/command` returns 503, and the pick sequence will fail at the gripper step unless you start the bridge with `BRIDGE_WITH_HANDS=1 ./scripts/start_bridge.sh real`.
 
-3. **Frame transform is 2D.** `_transform_pose_to_base_frame` rotates only x/y by robot yaw — z passes through unchanged. This ignores the ZED camera's height offset above `base_link`. With real ZED data, z needs the camera-to-base extrinsic transform. Will require calibration.
+3. **ZED extrinsics still need calibration.** The live perception backend now supports camera-to-base extrinsics through `ZED_TO_BASE_{X,Y,Z,ROLL,PITCH,YAW}`, but those default to zero. Until you calibrate them, real object poses will only be as good as that assumed transform.
 
 4. **Pick sequence blocks the HTTP thread ~5+ seconds.** `_execute_pick_sequence` runs synchronously: pregrasp (1.6s) + descend (1.0s) + grip (0.5s) + retreat (1.4s) ≈ 4.5s minimum. The capability server calls this via `_post_bridge_json` with a blocking HTTP request. Check the timeout on that call.
 
-5. **Verification in real mode still uses mock data.** `_verify_pick_execution` (real mode) calls `self.scene()` which returns `DEFAULT_OBJECTS`. The "is the object gone?" check will never confirm success on real hardware until real perception is wired in.
+5. **Verification in real mode is still provisional.** `_verify_pick_execution()` now marks the pick as succeeded when every bridge stage reports success, even without a real perception confirmation. That is useful for exercising the WBC path, but it is still a trust-based fallback until `scene()` is backed by real ZED perception.
 
 ## How It Works
 
@@ -26,6 +26,8 @@ Two switchable voice-control modes, both sharing a single HTTP bridge to the rob
 | **Fast** (`VOICE_MODE=realtime`) | ~500ms  | Voice (Realtime API)               | Locomotion: walk, turn, stop, distance/timed/sequential commands |
 | **Full** (`VOICE_MODE=openclaw`) | ~2-5s   | Voice + Text + WhatsApp (OpenClaw) | Locomotion + prototype map/localize/navigate/perceive/manipulate stack |
 
+
+![Architecture](docs/architecture_diagram.png)
 
 See [docs/architecture.md](docs/architecture.md) for the full architecture and data flow, and [docs/capability_stack.md](docs/capability_stack.md) for the new map/localize/navigate/perceive/manipulate control plane.
 
@@ -75,8 +77,11 @@ cd GR00T-WholeBodyControl/decoupled_wbc
 # Simulation (MuJoCo)
 ./scripts/start_bridge.sh
 
-# Real robot
+# Real robot, locomotion only
 ./scripts/start_bridge.sh real
+
+# Real robot, enable hand endpoints for staged pick execution
+BRIDGE_WITH_HANDS=1 ./scripts/start_bridge.sh real
 ```
 
 Verify: `curl http://localhost:8765/status`
@@ -114,10 +119,17 @@ ROBOT_NIC=eth0 ./scripts/start_bridge.sh real
 ### 4.5. Start the capability stack
 
 ```bash
+# Default: mock mode for development (fake perception / verification success)
 ./scripts/start_capability_server.sh
+
+# Real-backend mode: use the live ZED perception backend by default
+CAPABILITY_REAL_BACKEND=1 ./scripts/start_capability_server.sh
+
+# Force the ZED backend explicitly and optionally load 2D detections from JSON
+CAPABILITY_REAL_BACKEND=1 PERCEPTION_BACKEND=zed PERCEPTION_DETECTIONS_PATH=/path/to/detections.json ./scripts/start_capability_server.sh
 ```
 
-This starts the local capability server used by OpenClaw skills for saved-map navigation, perception, face recognition, and manipulation orchestration.
+This starts the local capability server used by OpenClaw skills for saved-map navigation, perception, face recognition, and manipulation orchestration. Check `curl -s http://127.0.0.1:8787/status` at any time; the JSON includes `mock_mode` and `perception_backend`.
 
 ### 5. Run a voice mode
 
