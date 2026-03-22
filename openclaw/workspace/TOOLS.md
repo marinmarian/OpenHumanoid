@@ -12,16 +12,13 @@ Things like:
 - Speaker/room names
 - Device nicknames
 - Anything environment-specific
-
-## Examples
-
-```markdown
-### Cameras
+- 
+## Cameras
 
 - main-cam -> Intel RealSense depth camera mounted on the Unitree G1
 - main-cam uses -> primary camera for navigation, SLAM, and object perception
 
-### TTS
+## TTS
 
 - Preferred voice style: Warm, confident, friendly, slightly playful
 - Speaking speed: Moderate
@@ -30,7 +27,7 @@ Things like:
 - During manipulation: Only brief status updates unless asked
 - Default speaker: Kitchen HomePod
 
-### Personality Delivery
+## Personality Delivery
 
 - Spoken style: Calm, friendly, and self-assured
 - Safety tone: Short, clear, serious
