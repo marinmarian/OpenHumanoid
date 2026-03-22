@@ -18,6 +18,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-eigen3-cmake-module \
     ros-humble-cv-bridge ros-humble-image-transport \
     ros-humble-rviz2 ros-humble-urdf \
+    ros-humble-navigation2 ros-humble-nav2-bringup \
+    ros-humble-nav2-mppi-controller \
+    ros-humble-nav2-smac-planner \
+    ros-humble-spatio-temporal-voxel-layer \
+    ros-humble-pointcloud-to-laserscan \
     libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
     libglu1-mesa-dev libglfw3-dev libglew-dev \
     liblapacke-dev libopenblas-dev \
