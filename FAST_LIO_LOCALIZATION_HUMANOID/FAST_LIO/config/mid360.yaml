@@ -7,7 +7,7 @@
     filter_size_map: 0.5
     cube_side_length: 1000.0
     runtime_pos_log_enable: false
-    map_file_path: "/root/ws_loc/src/FAST_LIO_LOCALIZATION_HUMANOID/data/scans_2697.pcd"
+    map_file_path: "/home/g1_user/ros2_ws/src/data/scans_2697.pcd"
 
     common:
       lid_topic:  "/livox/lidar"
@@ -32,9 +32,11 @@
       b_gyr_cov: 0.0001
       fov_degree: 360.0
       det_range: 100.0
-      extrinsic_est_en: true # true: enable the online estimation of IMU-LiDAR extrinsic
-      extrinsic_T: [-0.011, -0.02329, 0.04412]
-      extrinsic_R: [1., 0., 0., 0., 1., 0., 0., 0., 1.]
+      extrinsic_est_en: false # true: enable the online estimation of IMU-LiDAR extrinsic
+      extrinsic_T: [0.0, 0.0, 0.0]
+      extrinsic_R: [1., 0., 0., 
+                    0., -1., 0., 
+                    0., 0., -1.]
 
     publish:
       path_en: true # true: publish Path

@@ -24,14 +24,14 @@ def generate_launch_description():
     ])
 
     # 地图文件路径 - 使用绝对路径指向源码目录中的地图文件
-    map_file = '/root/ws_loc/src/FAST_LIO_LOCALIZATION_HUMANOID/data/scans_2697.pcd'
+    map_file = '/home/g1_user/ros2_ws/src/data/scans_2697.pcd'
 
     # 静态TF发布节点 - camera_init to odom
     static_tf_camera_init2odom = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
         name='camera_init2odom',
-        arguments=['0', '0', '0', '0', '0', '0', '1', 'odom', 'camera_init']
+        arguments=['0', '0', '0', '0', '0', '0', '-1', 'odom', 'camera_init']
     )
 
     # 静态TF发布节点 - imu_link to base_link
@@ -40,7 +40,7 @@ def generate_launch_description():
         package='tf2_ros',
         executable='static_transform_publisher',
         name='imulink2baselink',
-        arguments=['0', '0', '0', '0', '0', '0', '-1', 'imu_link', 'base_link']
+        arguments=['0', '0', '0', '0', '0', '0', '1', 'imu_link', 'base_link']
     )
 
     # 静态TF发布节点 - base_link to motion_link
