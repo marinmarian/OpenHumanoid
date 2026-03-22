@@ -6,6 +6,7 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 WBC_CONTAINER="${WBC_CONTAINER:-decoupled_wbc-bash-root}"
 BRIDGE_PORT="${BRIDGE_PORT:-8765}"
 ROBOT_NIC="${ROBOT_NIC:-enp0s31f6}"
+BRIDGE_WITH_HANDS="${BRIDGE_WITH_HANDS:-0}"
 INTERFACE="${1:-sim}"
 
 if ! docker ps --format '{{.Names}}' | grep -q "^${WBC_CONTAINER}$"; then
@@ -22,8 +23,13 @@ docker cp "$PROJECT_DIR/bridge/run_with_bridge.py" "$WBC_CONTAINER:/tmp/run_with
 
 LOOP_ARGS=""
 if [ "$INTERFACE" = "real" ]; then
-    LOOP_ARGS="-- --interface real --no-with_hands"
-    echo "Starting bridge + control loop (real robot, hands disabled)..."
+    if [[ "$BRIDGE_WITH_HANDS" == "1" || "$BRIDGE_WITH_HANDS" == "true" || "$BRIDGE_WITH_HANDS" == "yes" ]]; then
+        LOOP_ARGS="-- --interface real --with_hands"
+        echo "Starting bridge + control loop (real robot, hands enabled)..."
+    else
+        LOOP_ARGS="-- --interface real --no-with_hands"
+        echo "Starting bridge + control loop (real robot, hands disabled; set BRIDGE_WITH_HANDS=1 to enable the hand endpoints)..."
+    fi
 else
     echo "Starting bridge + control loop (simulation)..."
 fi

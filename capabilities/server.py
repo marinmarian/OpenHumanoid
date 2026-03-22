@@ -104,6 +104,37 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--map-frame", default=os.environ.get("WORLD_FRAME", "map"))
     parser.add_argument("--bridge-url", default=os.environ.get("BRIDGE_URL", "http://localhost:8765"))
     parser.add_argument(
+        "--perception-backend",
+        default=os.environ.get("PERCEPTION_BACKEND"),
+        help="Perception backend to use: 'mock' or 'zed'. Defaults to 'mock' in mock mode and 'zed' in real-backend mode.",
+    )
+    parser.add_argument(
+        "--perception-detections-path",
+        default=os.environ.get("PERCEPTION_DETECTIONS_PATH"),
+        help="Optional JSON file containing 2D detections to ground with the ZED point cloud.",
+    )
+    parser.add_argument(
+        "--detector-backend",
+        default=os.environ.get("DETECTOR_BACKEND"),
+        help="Detector backend for the ZED pipeline: 'none' or 'http'.",
+    )
+    parser.add_argument(
+        "--detector-url",
+        default=os.environ.get("DETECTOR_URL"),
+        help="HTTP detector service endpoint, for example http://127.0.0.1:8790/detect.",
+    )
+    parser.add_argument(
+        "--detector-timeout-s",
+        type=float,
+        default=float(os.environ.get("DETECTOR_TIMEOUT_S", "4.0")),
+        help="Timeout for detector backend requests.",
+    )
+    parser.add_argument(
+        "--detector-model",
+        default=os.environ.get("DETECTOR_MODEL"),
+        help="Optional detector model name to forward to the detector service.",
+    )
+    parser.add_argument(
         "--real-backend",
         action="store_true",
         help="Mark the server as backed by real sensor/control adapters instead of the mock state machine.",
@@ -122,6 +153,12 @@ def main() -> None:
         map_frame=args.map_frame,
         bridge_url=args.bridge_url,
         mock_mode=not args.real_backend,
+        perception_backend_name=args.perception_backend,
+        perception_detections_path=args.perception_detections_path,
+        detector_backend_name=args.detector_backend,
+        detector_url=args.detector_url,
+        detector_timeout_s=args.detector_timeout_s,
+        detector_model=args.detector_model,
     )
     CapabilityHandler.state = state
 
@@ -130,6 +167,7 @@ def main() -> None:
     print(f"[CAPABILITIES] State file: {args.state_path}")
     print(f"[CAPABILITIES] Camera={args.camera_name} LiDAR={args.lidar_name} mock_mode={state.mock_mode}")
     print(f"[CAPABILITIES] Bridge={args.bridge_url}")
+    print(f"[CAPABILITIES] Perception={state.perception_backend.describe()}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

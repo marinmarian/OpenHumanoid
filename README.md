@@ -4,17 +4,17 @@ Voice-controlled humanoid robot integrating **OpenClaw**, **SLAM/LiDAR Navigatio
 
 ## Known Gaps (capability stack)
 
-The manipulation pipeline is architecturally wired end-to-end but has the following gaps before it works on real hardware:
+The following gaps remain before the full pick pipeline works on real hardware:
 
-1. **Real perception now has a ZED path, but detection is still the main gap.** In real-backend mode the capability stack now uses a live ZED stereo backend for `scene()` and `object_pose()`, grounds detections into 3D with the point cloud, and can fall back to heuristic tabletop/color segmentation. The remaining gap is robust detection quality: for anything beyond simple tabletop/color cases, you still need a real detector feeding 2D boxes or masks into the stack.
+1. **Hands are opt-in on the real robot.** `scripts/start_bridge.sh` keeps `--no-with_hands` as the safe default. That means `hand_controller = None`, `/hand/command` returns 503, and the pick sequence will fail at the gripper step unless you start the bridge with `BRIDGE_WITH_HANDS=1 ./scripts/start_bridge.sh real`.
 
-2. **Hands are opt-in on the real robot.** `scripts/start_bridge.sh` keeps `--no-with_hands` as the safe default for the real robot. That means `hand_controller = None`, `/hand/command` returns 503, and the pick sequence will fail at the gripper step unless you start the bridge with `BRIDGE_WITH_HANDS=1 ./scripts/start_bridge.sh real`.
+2. **ZED extrinsics need calibration.** The perception backend supports camera-to-base extrinsics via `ZED_TO_BASE_{X,Y,Z,ROLL,PITCH,YAW}` env vars, but they default to zero. Until calibrated, real object poses will be inaccurate.
 
-3. **ZED extrinsics still need calibration.** The live perception backend now supports camera-to-base extrinsics through `ZED_TO_BASE_{X,Y,Z,ROLL,PITCH,YAW}`, but those default to zero. Until you calibrate them, real object poses will only be as good as that assumed transform.
+3. **Pick sequence blocks the HTTP thread ~5+ seconds.** `_execute_pick_sequence` runs synchronously (~4.5s minimum). Check the timeout on the capability server's bridge call.
 
-4. **Pick sequence blocks the HTTP thread ~5+ seconds.** `_execute_pick_sequence` runs synchronously: pregrasp (1.6s) + descend (1.0s) + grip (0.5s) + retreat (1.4s) ≈ 4.5s minimum. The capability server calls this via `_post_bridge_json` with a blocking HTTP request. Check the timeout on that call.
+4. **Navigation is scaffolded, not wired.** Map build/load/localize/navigate APIs exist and the state machine is complete, but no real LiDAR SLAM or path planner is connected yet.
 
-5. **Verification in real mode is still provisional.** `_verify_pick_execution()` now marks the pick as succeeded when every bridge stage reports success, even without a real perception confirmation. That is useful for exercising the WBC path, but it is still a trust-based fallback until `scene()` is backed by real ZED perception.
+5. **Face recognition is stubbed.** Enrollment works but recognition returns a hardcoded match — no real face embedding model is wired.
 
 ## How It Works
 
@@ -30,6 +30,19 @@ Two switchable voice-control modes, both sharing a single HTTP bridge to the rob
 ![Architecture](docs/architecture_diagram.png)
 
 See [docs/architecture.md](docs/architecture.md) for the full architecture and data flow, and [docs/capability_stack.md](docs/capability_stack.md) for the new map/localize/navigate/perceive/manipulate control plane.
+
+## Perception Backends
+
+The capability stack supports two real perception backends (plus a mock for development):
+
+| Backend | How it works | When to use |
+| ------- | ------------ | ----------- |
+| **mock** (default) | Returns hardcoded objects. No camera needed. | Development and testing without hardware |
+| **ZED + heuristics** | Live ZED RGB + point cloud. Detects flat surfaces and color-segmentable objects. | Quick smoke test with the camera plugged in |
+| **ZED + YOLO** | ZED frames sent to a local YOLO service (`scripts/detector_service.sh`). 2D boxes grounded into 3D via ZED point cloud. | Best accuracy for known object classes, no API cost |
+| **ZED + OpenAI VLM** | ZED frames sent to GPT-4o/4.1-mini. Open-vocabulary detection, bounding boxes grounded into 3D. Live-tested end-to-end. | Open-vocabulary queries ("the red mug on the left"), no local GPU needed |
+
+The YOLO and OpenAI VLM backends are both routed through the same HTTP detector service (`scripts/detector_service.py`) and are interchangeable — the 3D grounding and grasp planning pipeline is identical for both.
 
 ## Prerequisites
 
@@ -116,20 +129,41 @@ Then either set it inline or export it:
 ROBOT_NIC=eth0 ./scripts/start_bridge.sh real
 ```
 
-### 4.5. Start the capability stack
+### 4.5. Start the detector service (optional but recommended for real perception)
+
+```bash
+# Install the optional detector stack once
+uv sync --extra vision
+
+# Run a real detector service (Ultralytics / YOLO)
+./scripts/start_detector_service.sh
+
+# Or use an OpenAI vision-language model as the detector backend
+DETECTOR_SERVICE_BACKEND=openai DETECTOR_MODEL=gpt-4.1-mini ./scripts/start_detector_service.sh
+
+# Or run the detector service from a fixture file for debugging
+DETECTOR_SERVICE_BACKEND=fixture DETECTOR_FIXTURE_PATH=/path/to/detections.json ./scripts/start_detector_service.sh
+```
+
+The detector service listens on `http://127.0.0.1:8790/detect` by default and returns 2D detections that the ZED perception backend grounds into 3D.
+
+### 4.6. Start the capability stack
 
 ```bash
 # Default: mock mode for development (fake perception / verification success)
 ./scripts/start_capability_server.sh
 
 # Real-backend mode: use the live ZED perception backend by default
-CAPABILITY_REAL_BACKEND=1 ./scripts/start_capability_server.sh
+CAPABILITY_REAL_BACKEND=1 PERCEPTION_BACKEND=zed ./scripts/start_capability_server.sh
 
-# Force the ZED backend explicitly and optionally load 2D detections from JSON
+# Real-backend mode with the detector service enabled
+CAPABILITY_REAL_BACKEND=1 PERCEPTION_BACKEND=zed DETECTOR_BACKEND=http DETECTOR_URL=http://127.0.0.1:8790/detect ./scripts/start_capability_server.sh
+
+# Force fixture detections instead of the detector service
 CAPABILITY_REAL_BACKEND=1 PERCEPTION_BACKEND=zed PERCEPTION_DETECTIONS_PATH=/path/to/detections.json ./scripts/start_capability_server.sh
 ```
 
-This starts the local capability server used by OpenClaw skills for saved-map navigation, perception, face recognition, and manipulation orchestration. Check `curl -s http://127.0.0.1:8787/status` at any time; the JSON includes `mock_mode` and `perception_backend`.
+This starts the local capability server used by OpenClaw skills for saved-map navigation, perception, face recognition, and manipulation orchestration. Check `curl -s http://127.0.0.1:8787/status` at any time; the JSON includes `mock_mode`, `perception_backend`, and the active detector backend information.
 
 ### 5. Run a voice mode
 

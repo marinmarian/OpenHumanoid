@@ -202,6 +202,8 @@ class MockHandler(BaseHTTPRequestHandler):
                     "last_arm_cmd": last_arm_cmd,
                     "last_hand_cmd": last_hand_cmd,
                     "last_pick_sequence": last_pick_sequence,
+                    "arm_endpoint_ready": True,
+                    "hand_endpoint_ready": True,
                     "mock": True,
                     "vel_step": VEL_STEP,
                 },

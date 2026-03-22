@@ -473,6 +473,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     "last_arm_cmd": _last_arm_cmd,
                     "last_hand_cmd": _last_hand_cmd,
                     "last_pick_sequence": _last_pick_sequence,
+                    "arm_endpoint_ready": arm_controller is not None,
+                    "hand_endpoint_ready": hand_controller is not None,
                     "vel_step": VEL_STEP,
                 },
             )

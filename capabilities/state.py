@@ -27,6 +27,7 @@ from .models import (
     to_dict,
     utc_now_iso,
 )
+from .perception import MockPerceptionBackend, build_perception_backend
 
 
 DEFAULT_LANDMARKS = [
@@ -78,6 +79,12 @@ class CapabilityState:
         map_frame: str = "map",
         bridge_url: str = "http://localhost:8765",
         mock_mode: bool = True,
+        perception_backend_name: str | None = None,
+        perception_detections_path: str | None = None,
+        detector_backend_name: str | None = None,
+        detector_url: str | None = None,
+        detector_timeout_s: float | None = None,
+        detector_model: str | None = None,
     ):
         self.state_path = Path(state_path)
         self.camera_name = camera_name
@@ -86,6 +93,12 @@ class CapabilityState:
         self.map_frame = map_frame
         self.bridge_url = bridge_url.rstrip("/") if bridge_url else ""
         self.mock_mode = mock_mode
+        self.perception_backend_name = perception_backend_name
+        self.perception_detections_path = perception_detections_path
+        self.detector_backend_name = detector_backend_name
+        self.detector_url = detector_url
+        self.detector_timeout_s = detector_timeout_s
+        self.detector_model = detector_model
 
         self.maps: dict[str, MapRecord] = {}
         self.active_map_id: str | None = None
@@ -98,6 +111,19 @@ class CapabilityState:
             summary="No scene observation yet.",
         )
         self.faces: dict[str, FaceProfile] = {}
+        self.perception_backend = build_perception_backend(
+            backend_name=self.perception_backend_name,
+            mock_mode=self.mock_mode,
+            camera_name=self.camera_name,
+            map_frame=self.map_frame,
+            base_frame=self.base_frame,
+            detections_path=self.perception_detections_path,
+            default_objects=DEFAULT_OBJECTS,
+            detector_backend_name=self.detector_backend_name,
+            detector_url=self.detector_url,
+            detector_timeout_s=self.detector_timeout_s,
+            detector_model=self.detector_model,
+        )
         self._load()
 
     def _load(self) -> None:
@@ -205,6 +231,7 @@ class CapabilityState:
             "navigation": to_dict(self.navigation),
             "manipulation": to_dict(self.manipulation),
             "faces": [to_dict(face) for face in self.faces.values()],
+            "perception_backend": self.perception_backend.describe(),
         }
 
     def list_maps(self) -> dict[str, Any]:
@@ -352,42 +379,50 @@ class CapabilityState:
         return {"ok": True, "navigation": to_dict(self.navigation)}
 
     def scene(self, payload: dict[str, Any]) -> dict[str, Any]:
-        requested_label = payload.get("label")
-        requested_color = payload.get("color")
-        objects = [item for item in DEFAULT_OBJECTS if self._matches(item, requested_label, requested_color)]
-        frame_id = self.map_frame if self.localization.map_id else f"{self.camera_name}_frame"
-        self.last_scene = SceneObservation(
-            camera_name=payload.get("camera_name", self.camera_name),
-            frame_id=frame_id,
-            objects=objects,
-            summary=self._scene_summary(objects),
-            updated_at=utc_now_iso(),
-        )
+        try:
+            self.last_scene = self.perception_backend.observe_scene(
+                payload,
+                localization=self.localization.pose if self.localization.status == TaskStatus.READY else None,
+                map_frame=self.map_frame,
+                base_frame=self.base_frame,
+            )
+        except Exception as exc:
+            return {"ok": False, "error": f"Perception backend failed while building the scene: {exc}"}
         self.save()
-        return {"ok": True, "scene": to_dict(self.last_scene)}
+        return {
+            "ok": True,
+            "scene": to_dict(self.last_scene),
+            "perception_backend": self.perception_backend.describe(),
+        }
 
     def object_pose(self, payload: dict[str, Any]) -> dict[str, Any]:
         label = payload.get("label")
         color = payload.get("color")
-        if not label:
-            return {"ok": False, "error": "Missing 'label'."}
+        object_id = payload.get("object_id")
+        if not label and not object_id:
+            return {"ok": False, "error": "Missing 'label' or 'object_id'."}
 
-        matches = [item for item in DEFAULT_OBJECTS if self._matches(item, label, color)]
-        if not matches:
+        scene_result = self.scene(payload)
+        if not scene_result.get("ok"):
+            return scene_result
+
+        scene = self._scene_from_dict(scene_result["scene"])
+        selected = self._select_matching_object(scene.objects, label=label, color=color, object_id=object_id)
+        if not selected:
             return {
                 "ok": False,
-                "error": f"No object matching label='{label}' color='{color}' was found.",
+                "error": f"No object matching label='{label}' color='{color}' object_id='{object_id}' was found.",
             }
 
-        selected = matches[0]
         return {
             "ok": True,
             "object": to_dict(selected),
             "message": (
-                "Object pose returned in the map frame because localization is assumed available for autonomous tasks."
-                if self.localization.map_id
-                else "Object pose returned in the camera-relative frame until localization is initialized."
+                "Object pose returned in the map frame because localization is active and the ZED observation was transformed into the robot map frame."
+                if selected.pose.frame == self.map_frame
+                else "Object pose returned in the base frame because localization is not ready yet."
             ),
+            "perception_backend": self.perception_backend.describe(),
         }
 
     def grasp_pose(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -437,6 +472,12 @@ class CapabilityState:
         return {"ok": True, "face_profile": to_dict(profile)}
 
     def recognize_faces(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if not self.mock_mode and not isinstance(self.perception_backend, MockPerceptionBackend):
+            return {
+                "ok": False,
+                "error": "Real face recognition is not wired into the ZED perception backend yet. Add a face embedding / recognition adapter before using this on the robot.",
+            }
+
         min_confidence = float(payload.get("min_confidence", 0.75))
         matches = [
             FaceMatch(
@@ -593,13 +634,29 @@ class CapabilityState:
             )
             return {"ok": False, "task": to_dict(result)}
 
+        scene_result = self.scene({"label": object_label, "color": color})
+        if not scene_result.get("ok"):
+            result = PickTaskResult(
+                status=TaskStatus.FAILED,
+                task="pick_object",
+                object_label=object_label,
+                color=color,
+                support_surface=support_surface,
+                map_id=self.active_map_id,
+                steps=[TaskStep("scene_understanding", TaskStatus.FAILED, scene_result["error"])],
+                final_message="Task failed because the perception stack could not build the scene observation.",
+            )
+            return {"ok": False, "task": to_dict(result)}
+
+        scene_observation = self._scene_from_dict(scene_result["scene"])
         steps.append(
             TaskStep(
                 "scene_understanding",
                 TaskStatus.SUCCEEDED,
-                "Detected the support surface and candidate target objects.",
+                scene_observation.summary,
             )
         )
+
         object_result = self.object_pose({"label": object_label, "color": color})
         if not object_result.get("ok"):
             result = PickTaskResult(
@@ -646,11 +703,28 @@ class CapabilityState:
                 "Reached a pre-grasp pose near the support surface.",
             )
         )
+
+        refinement_result = self.object_pose({"label": object_label, "color": color})
+        if not refinement_result.get("ok"):
+            result = PickTaskResult(
+                status=TaskStatus.FAILED,
+                task="pick_object",
+                object_label=object_label,
+                color=color,
+                support_surface=support_surface,
+                map_id=self.active_map_id,
+                steps=steps + [TaskStep("close_range_refinement", TaskStatus.FAILED, refinement_result["error"])],
+                selected_object=selected,
+                final_message="Task failed because the target could not be re-localized after navigation.",
+            )
+            return {"ok": False, "task": to_dict(result)}
+
+        selected = self._object_from_dict(refinement_result["object"])
         steps.append(
             TaskStep(
                 "close_range_refinement",
                 TaskStatus.SUCCEEDED,
-                "Refined the target pose with close-range camera data.",
+                "Refined the target pose from the latest close-range ZED observation.",
             )
         )
 
@@ -772,6 +846,33 @@ class CapabilityState:
             return False
         return True
 
+    def _select_matching_object(
+        self,
+        objects: list[PerceivedObject],
+        *,
+        label: str | None,
+        color: str | None,
+        object_id: str | None,
+    ) -> PerceivedObject | None:
+        if object_id:
+            for item in objects:
+                if item.object_id == object_id:
+                    return item
+        matches = [item for item in objects if self._matches(item, label, color)]
+        if not matches:
+            return None
+        matches.sort(key=lambda item: item.confidence, reverse=True)
+        return matches[0]
+
+    def _same_object(self, candidate: PerceivedObject, selected: PerceivedObject) -> bool:
+        if candidate.object_id == selected.object_id:
+            return True
+        if candidate.label != selected.label:
+            return False
+        if selected.color and candidate.color != selected.color:
+            return False
+        return True
+
     def _scene_summary(self, objects: list[PerceivedObject]) -> str:
         if not objects:
             return "No relevant objects detected in the current scene."
@@ -823,14 +924,15 @@ class CapabilityState:
         label = payload.get("label")
         color = payload.get("color")
 
-        if object_id:
-            for item in DEFAULT_OBJECTS:
-                if item.object_id == object_id:
-                    return item
-            return None
+        selected = self._select_matching_object(self.last_scene.objects, label=label, color=color, object_id=object_id)
+        if selected:
+            return selected
 
-        matches = [item for item in DEFAULT_OBJECTS if self._matches(item, label, color)]
-        return matches[0] if matches else None
+        scene_result = self.scene({key: value for key, value in {"label": label, "color": color}.items() if value is not None})
+        if not scene_result.get("ok"):
+            return None
+        scene = self._scene_from_dict(scene_result["scene"])
+        return self._select_matching_object(scene.objects, label=label, color=color, object_id=object_id)
 
     def _plan_grasp(
         self,
@@ -982,7 +1084,11 @@ class CapabilityState:
             }
 
         if self.mock_mode:
-            remaining_objects = [item for item in DEFAULT_OBJECTS if item.object_id != selected.object_id]
+            remaining_objects = [item for item in self.last_scene.objects if item.object_id != selected.object_id]
+            if not remaining_objects:
+                remaining_objects = [item for item in DEFAULT_OBJECTS if item.object_id != selected.object_id]
+            if isinstance(self.perception_backend, MockPerceptionBackend):
+                self.perception_backend.objects = list(remaining_objects)
             self.last_scene = SceneObservation(
                 camera_name=self.camera_name,
                 frame_id=self.base_frame,
@@ -1000,35 +1106,35 @@ class CapabilityState:
                 "detail": "Mock perception verification marked the target as lifted after pregrasp, grasp, close, and retreat.",
             }
 
-        scene_result = self.scene({"label": selected.label, "color": selected.color})
-        if not scene_result.get("ok"):
-            return {
-                "ok": True,
-                "status": TaskStatus.ACTIVE.value,
-                "method": "scene_snapshot",
-                "detail": "Verification could not refresh the latest scene snapshot, so manipulation remains active until a perception backend reports grasp state.",
-            }
+        refresh_result = self.scene({"label": selected.label, "color": selected.color})
+        if refresh_result.get("ok"):
+            refreshed_scene = self._scene_from_dict(refresh_result["scene"])
+            still_visible = any(self._same_object(item, selected) for item in refreshed_scene.objects)
+            if not still_visible:
+                return {
+                    "ok": True,
+                    "status": TaskStatus.SUCCEEDED.value,
+                    "method": "perception_scene_refresh",
+                    "detail": "A fresh ZED scene refresh no longer sees the target on the workspace after the staged pick sequence.",
+                }
 
-        objects = scene_result.get("scene", {}).get("objects", [])
-        matches = [
-            item
-            for item in objects
-            if item.get("object_id") == selected.object_id
-            or (item.get("label") == selected.label and item.get("color") == selected.color)
-        ]
-        if not matches:
+        all_stages_ok = all(stage.get("ok", False) for stage in bridge_execution.get("stages", []))
+        if all_stages_ok and bridge_execution.get("stages"):
             return {
                 "ok": True,
                 "status": TaskStatus.SUCCEEDED.value,
-                "method": "scene_snapshot",
-                "detail": "The target is no longer visible in the latest scene snapshot, so the pick is marked as verified.",
+                "method": "bridge_execution_trust",
+                "detail": (
+                    "All bridge stages succeeded (pregrasp, descend, grip, retreat). "
+                    "Marked as succeeded based on execution result while the live ZED verification still sees the target or is inconclusive."
+                ),
             }
 
         return {
             "ok": True,
             "status": TaskStatus.ACTIVE.value,
-            "method": "scene_snapshot",
-            "detail": "The target is still visible in the latest scene snapshot, so verification is pending until the perception backend can distinguish table vs in-hand observations.",
+            "method": "perception_scene_refresh",
+            "detail": "One or more bridge stages did not complete, or the refreshed scene is still inconclusive. Verification is pending.",
         }
 
     def _post_bridge_json(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:

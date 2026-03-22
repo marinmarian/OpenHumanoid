@@ -40,8 +40,13 @@ else
 fi
 
 echo "Checking capability stack at $CAPABILITY_SERVER_URL/status ..."
-if curl -sf "$CAPABILITY_SERVER_URL/status" > /dev/null 2>&1; then
+CAPABILITY_STATUS=""
+if CAPABILITY_STATUS="$(curl -sf "$CAPABILITY_SERVER_URL/status")"; then
     echo "Capability stack is running."
+    CAPABILITY_MOCK_MODE="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("mock_mode", "unknown"))' <<< "$CAPABILITY_STATUS" 2>/dev/null || true)"
+    if [ -n "$CAPABILITY_MOCK_MODE" ]; then
+        echo "Capability stack mode: mock_mode=$CAPABILITY_MOCK_MODE"
+    fi
 else
     echo "WARNING: Capability stack not reachable at $CAPABILITY_SERVER_URL"
     echo "Start it with: ./scripts/start_capability_server.sh"
