@@ -44,3 +44,12 @@ Skills are shared. Your setup is yours. Keeping them apart means you can update 
 ---
 
 Add whatever helps you do your job. This is your cheat sheet.
+
+
+### OpenHumanoid Setup
+
+- navigation camera -> `zed-mini`
+- localization lidar -> `lidar`
+- capability stack -> `http://localhost:8787`
+- bridge -> `http://localhost:8765`
+- default map landmark -> `table`

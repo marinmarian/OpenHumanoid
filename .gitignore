@@ -38,3 +38,5 @@ GR00T-WholeBodyControl/
 .env
 credentials.json
 .cursorignore
+# Capability stack runtime
+capabilities/runtime/

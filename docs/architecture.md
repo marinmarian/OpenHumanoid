@@ -83,7 +83,22 @@ OpenClaw → TTS-1 → voice reply (auto-TTS)
 - **Talk Mode** — voice input/output via the WebChat microphone
 - **WhatsApp** — send commands from your phone (requires `openclaw channels login --channel whatsapp`)
 
+<<<<<<< HEAD
 The OpenClaw agent uses the `robot_control` skill to send `curl` commands to the bridge, and the current orchestration layer also supports SLAM/LiDAR navigation. Future skills such as VLA manipulation plug in the same way.
+=======
+The OpenClaw agent uses the `robot_control` skill for direct locomotion and the `navigation_stack`, `perception_stack`, and `manipulation_stack` skills for autonomous tasks. Those skills call the local capability stack server, which persists maps and sequences perception, navigation, and manipulation.
+
+## Capability Stack (prototype)
+
+A new local capability server (`capabilities/server.py`) exposes the higher-level APIs that OpenClaw should use for autonomous work:
+
+- saved-map lifecycle: build, load, localize
+- navigation goals against persistent map landmarks
+- perception queries for objects, scenes, and faces
+- manipulation and a combined pick-object task
+
+This stack is intentionally map-based: build the map once, then load it and localize against it during later runs. The current implementation is a control-plane scaffold with persistent state and task sequencing; its sensing, SLAM, planning, and grasp execution internals are still mock-backed.
+>>>>>>> origin/feat/capability-stack
 
 ## Bridge Server
 
@@ -166,7 +181,12 @@ GEAR-SONIC accepts commands via a ZMQ interface (`mode`, `movement_direction`, `
 
 | Task | Integration Point | What to Add |
 |------|-------------------|-------------|
+<<<<<<< HEAD
 | Task 3 (VLA + Nav + WBC) | OpenClaw orchestrates all skills | `vla-control` skill, vision pipeline |
+=======
+| Task 2 (SLAM/LiDAR Nav) | Capability stack + `navigation_stack` skill | Saved-map control plane is scaffolded; real SLAM/nav adapters still needed |
+| Task 3 (VLA + Nav + WBC) | Capability stack + `perception_stack` + `manipulation_stack` | Orchestration is scaffolded; real vision and grasp backends still needed |
+>>>>>>> origin/feat/capability-stack
 | GEAR-SONIC | Alternative bridge backend | ZMQ publisher, mode mapping |
 
 ## Configuration
@@ -176,4 +196,5 @@ GEAR-SONIC accepts commands via a ZMQ interface (`mode`, `movement_direction`, `
 | `VOICE_MODE` | `realtime` | `realtime` or `openclaw` |
 | `OPENAI_API_KEY` | (required) | Used by both modes |
 | `BRIDGE_URL` | `http://localhost:8765` | Bridge server address |
+| `CAPABILITY_SERVER_URL` | `http://localhost:8787` | Local capability stack address |
 | `LOG_LEVEL` | `INFO` | Logging verbosity |
