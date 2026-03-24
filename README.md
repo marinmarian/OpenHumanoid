@@ -211,4 +211,4 @@ OpenHumanoid/
 
 ## License
 
-TBD
+MIT — see [LICENSE](LICENSE) for details.
