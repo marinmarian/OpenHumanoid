@@ -6,6 +6,15 @@ Built during **HACK2026 Hackathon**, organized by the ETH Robotics Club and won 
 
 ![Current status: what's built and what's planned](docs/images/pitch_overview.png)
 
+## Hackathon Team
+
+- [@alexzh3](https://github.com/alexzh3)
+- [@Kotochleb](https://github.com/Kotochleb)
+- [@RoksolanaMazurak](https://github.com/RoksolanaMazurak)
+- [@RybOlya](https://github.com/RybOlya)
+- [@Simoneutili](https://github.com/Simoneutili)
+- [@VictoriaStarynchuk](https://github.com/VictoriaStarynchuk)
+  
 ## How It Works
 
 Two switchable voice-control modes, both sharing a single HTTP bridge to the robot:
@@ -199,15 +208,6 @@ OpenHumanoid/
 - [Architecture & Data Flow](docs/architecture.md)
 - [Planned Features & Roadmap](docs/README_future.md)
 - [AI Context](CONTEXT.md)
-
-## Team
-
-- [@alexzh3](https://github.com/alexzh3)
-- [@Kotochleb](https://github.com/Kotochleb)
-- [@RoksolanaMazurak](https://github.com/RoksolanaMazurak)
-- [@RybOlya](https://github.com/RybOlya)
-- [@Simoneutili](https://github.com/Simoneutili)
-- [@VictoriaStarynchuk](https://github.com/VictoriaStarynchuk)
 
 ## License
 
