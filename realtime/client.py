@@ -83,7 +83,7 @@ class RealtimeClient:
                         "format": {"type": "audio/pcm", "rate": 24000},
                         "turn_detection": {
                             "type": "server_vad",
-                            "threshold": 0.9,
+                            "threshold": 0.5,
                             "prefix_padding_ms": 300,
                             "silence_duration_ms": 500,
                         },

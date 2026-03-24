@@ -1,46 +1,19 @@
 # OpenHumanoid
 
-Voice-controlled humanoid robot integrating **OpenClaw**, **SLAM/LiDAR Navigation**, and **GR00T WBC + VLA** for voice-driven locomotion and loco-manipulation on the Unitree G1.
+Open-source agentic AI framework for voice-controlled humanoid robots. Currently running **voice-driven locomotion** on the **Unitree G1** via **OpenClaw** and **GR00T Whole-Body Control**.
 
-## Known Gaps (capability stack)
-
-The following gaps remain before the full pick pipeline works on real hardware:
-
-1. **Hands are opt-in on the real robot.** `scripts/start_bridge.sh` keeps `--no-with_hands` as the safe default. That means `hand_controller = None`, `/hand/command` returns 503, and the pick sequence will fail at the gripper step unless you start the bridge with `BRIDGE_WITH_HANDS=1 ./scripts/start_bridge.sh real`.
-2. **ZED extrinsics need calibration.** The perception backend supports camera-to-base extrinsics via `ZED_TO_BASE_{X,Y,Z,ROLL,PITCH,YAW}` env vars, but they default to zero. Until calibrated, real object poses will be inaccurate.
-3. **Pick sequence blocks the HTTP thread ~5+ seconds.** `_execute_pick_sequence` runs synchronously (~4.5s minimum). Check the timeout on the capability server's bridge call.
-4. **Navigation is scaffolded, not wired.** Map build/load/localize/navigate APIs exist and the state machine is complete, but no real LiDAR SLAM or path planner is connected yet.
-5. **Face recognition is stubbed.** Enrollment works but recognition returns a hardcoded match — no real face embedding model is wired.
+![Current status: what's built and what's planned](docs/images/pitch_overview.png)
 
 ## How It Works
 
 Two switchable voice-control modes, both sharing a single HTTP bridge to the robot:
 
+| Mode                             | Latency | Input                              | Capabilities                                             |
+| -------------------------------- | ------- | ---------------------------------- | -------------------------------------------------------- |
+| **Fast** (`VOICE_MODE=realtime`) | ~500ms  | Voice (Realtime API)               | Locomotion: walk, turn, stop, distance/timed/sequential  |
+| **Full** (`VOICE_MODE=openclaw`) | ~2-5s   | Voice + Text + WhatsApp (OpenClaw) | Locomotion with personality (Theo), multi-channel access  |
 
-| Mode                             | Latency | Input                              | Capabilities                                                           |
-| -------------------------------- | ------- | ---------------------------------- | ---------------------------------------------------------------------- |
-| **Fast** (`VOICE_MODE=realtime`) | ~500ms  | Voice (Realtime API)               | Locomotion: walk, turn, stop, distance/timed/sequential commands       |
-| **Full** (`VOICE_MODE=openclaw`) | ~2-5s   | Voice + Text + WhatsApp (OpenClaw) | Locomotion + prototype map/localize/navigate/perceive/manipulate stack |
-
-
-Architecture
-
-See [docs/architecture.md](docs/architecture.md) for the full architecture and data flow, and [docs/capability_stack.md](docs/capability_stack.md) for the new map/localize/navigate/perceive/manipulate control plane.
-
-## Perception Backends
-
-The capability stack supports two real perception backends (plus a mock for development):
-
-
-| Backend              | How it works                                                                                                            | When to use                                                              |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| **mock** (default)   | Returns hardcoded objects. No camera needed.                                                                            | Development and testing without hardware                                 |
-| **ZED + heuristics** | Live ZED RGB + point cloud. Detects flat surfaces and color-segmentable objects.                                        | Quick smoke test with the camera plugged in                              |
-| **ZED + YOLO**       | ZED frames sent to a local YOLO service (`scripts/detector_service.sh`). 2D boxes grounded into 3D via ZED point cloud. | Best accuracy for known object classes, no API cost                      |
-| **ZED + OpenAI VLM** | ZED frames sent to GPT-4o/4.1-mini. Open-vocabulary detection, bounding boxes grounded into 3D. Live-tested end-to-end. | Open-vocabulary queries ("the red mug on the left"), no local GPU needed |
-
-
-The YOLO and OpenAI VLM backends are both routed through the same HTTP detector service (`scripts/detector_service.py`) and are interchangeable — the 3D grounding and grasp planning pipeline is identical for both.
+See [docs/architecture.md](docs/architecture.md) for the full architecture and data flow.
 
 ## Prerequisites
 
@@ -50,7 +23,6 @@ The YOLO and OpenAI VLM backends are both routed through the same HTTP detector 
 - A Unitree G1 robot connected via Ethernet (or use mock mode for dev)
 - An [OpenAI API key](https://platform.openai.com/api-keys) with Realtime API access
 - A working microphone and speaker (for voice modes)
-- **ZED camera perception:** [ZED SDK](https://www.stereolabs.com/developers/release) must be installed on the host (see below)
 
 ## Quick Start
 
@@ -89,11 +61,8 @@ cd GR00T-WholeBodyControl/decoupled_wbc
 # Simulation (MuJoCo)
 ./scripts/start_bridge.sh
 
-# Real robot, locomotion only
+# Real robot
 ./scripts/start_bridge.sh real
-
-# Real robot, enable hand endpoints for staged pick execution
-BRIDGE_WITH_HANDS=1 ./scripts/start_bridge.sh real
 ```
 
 Verify: `curl http://localhost:8765/status`
@@ -128,42 +97,6 @@ Then either set it inline or export it:
 ROBOT_NIC=eth0 ./scripts/start_bridge.sh real
 ```
 
-### 4.5. Start the detector service (optional but recommended for real perception)
-
-```bash
-# Install the optional detector stack once
-uv sync --extra vision
-
-# Run a real detector service (Ultralytics / YOLO)
-./scripts/start_detector_service.sh
-
-# Or use an OpenAI vision-language model as the detector backend
-DETECTOR_SERVICE_BACKEND=openai DETECTOR_MODEL=gpt-4.1-mini ./scripts/start_detector_service.sh
-
-# Or run the detector service from a fixture file for debugging
-DETECTOR_SERVICE_BACKEND=fixture DETECTOR_FIXTURE_PATH=/path/to/detections.json ./scripts/start_detector_service.sh
-```
-
-The detector service listens on `http://127.0.0.1:8790/detect` by default and returns 2D detections that the ZED perception backend grounds into 3D.
-
-### 4.6. Start the capability stack
-
-```bash
-# Default: mock mode for development (fake perception / verification success)
-./scripts/start_capability_server.sh
-
-# Real-backend mode: use the live ZED perception backend by default
-CAPABILITY_REAL_BACKEND=1 PERCEPTION_BACKEND=zed ./scripts/start_capability_server.sh
-
-# Real-backend mode with the detector service enabled
-CAPABILITY_REAL_BACKEND=1 PERCEPTION_BACKEND=zed DETECTOR_BACKEND=http DETECTOR_URL=http://127.0.0.1:8790/detect ./scripts/start_capability_server.sh
-
-# Force fixture detections instead of the detector service
-CAPABILITY_REAL_BACKEND=1 PERCEPTION_BACKEND=zed PERCEPTION_DETECTIONS_PATH=/path/to/detections.json ./scripts/start_capability_server.sh
-```
-
-This starts the local capability server used by OpenClaw skills for saved-map navigation, perception, face recognition, and manipulation orchestration. Check `curl -s http://127.0.0.1:8787/status` at any time; the JSON includes `mock_mode`, `perception_backend`, and the active detector backend information.
-
 ### 5. Run a voice mode
 
 **Fast mode** (OpenAI Realtime API):
@@ -190,7 +123,7 @@ cd openclaw && bash setup.sh && cd ..
 openclaw gateway start
 ```
 
-Open [http://127.0.0.1:18789](http://127.0.0.1:18789) for WebChat, or use Talk Mode for voice. Supports text and voice via WhatsApp when configured. For autonomy tasks, start the capability stack first so OpenClaw can call the navigation, perception, and manipulation skills.
+Open [http://127.0.0.1:18789](http://127.0.0.1:18789) for WebChat, or use Talk Mode for voice. Supports text and voice via WhatsApp when configured.
 
 ## Bridge HTTP API
 
@@ -200,7 +133,6 @@ Velocities are written directly to the WBC neural network policy — any float v
 
 ### Locomotion
 
-
 | Method | Endpoint      | Example                                                                                                              | Description                                                        |
 | ------ | ------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | POST   | `/move`       | `curl -s -X POST http://localhost:8765/move -H 'Content-Type: application/json' -d '{"vx":0.4,"vy":0.0,"vyaw":0.0}'` | Set velocity `[vx, vy, vyaw]` directly on `policy.cmd`             |
@@ -209,53 +141,17 @@ Velocities are written directly to the WBC neural network policy — any float v
 | POST   | `/deactivate` | `curl -s -X POST http://localhost:8765/deactivate`                                                                   | Deactivate policy                                                  |
 | POST   | `/key`        | `curl -s -X POST http://localhost:8765/key -H 'Content-Type: application/json' -d '{"key":"9"}'`                     | Send a raw key event (`9`=release/hold, `1`/`2`=base height, etc.) |
 
-
 Speed reference: slow=0.2, medium=0.4, fast=0.6 m/s.
-
-### Upper Body (arm + hand)
-
-Requires `BRIDGE_WITH_HANDS=1` for hand endpoints.
-
-
-| Method | Endpoint                      | Body                                                                                      | Description                                                             |
-| ------ | ----------------------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| POST   | `/arm/pose`                   | `{"active_arm":"right", "wrist_pose":[x,y,z,qw,qx,qy,qz], "move_time_s":1.5}`             | Move wrist to a Cartesian target via IK. 7 floats = one arm, 14 = both. |
-| POST   | `/hand/command`               | `{"active_arm":"right", "posture":"grasp", "gripper_width":0.08}`                         | Open/close hand. Postures: `open`, `release`, `close`, `grasp`.         |
-| POST   | `/manipulation/pick_sequence` | `{"active_arm":"right", "pregrasp_pose":[...], "grasp_pose":[...], "retreat_pose":[...]}` | Staged pick: open hand, pregrasp, descend, close hand, retreat.         |
-
 
 ### Status
 
-
-| Method | Endpoint  | Description                                                                                     |
-| ------ | --------- | ----------------------------------------------------------------------------------------------- |
-| GET    | `/status` | Returns current velocity, actual `policy.cmd`, arm/hand readiness, and `policy_connected` flag. |
-
+| Method | Endpoint  | Description                                                              |
+| ------ | --------- | ------------------------------------------------------------------------ |
+| GET    | `/status` | Returns current velocity, actual `policy.cmd`, and `policy_connected` flag |
 
 ```bash
 curl -s http://localhost:8765/status | python3 -m json.tool
 ```
-
-## Capability Stack API
-
-The prototype autonomy stack runs as a local HTTP server on port `8787` by default. It persists saved maps and exposes higher-level endpoints for map building, localization, navigation, perception, face recognition, and object picking.
-
-Key endpoints:
-
-- `GET  /perception/raw-capture` — returns a PNG image directly from the ZED camera
-- `POST /maps/build`
-- `POST /maps/load`
-- `POST /localization/initialize`
-- `POST /navigation/goal`
-- `POST /perception/scene`
-- `POST /perception/object_pose`
-- `POST /perception/grasp_pose`
-- `POST /perception/face/enroll`
-- `POST /perception/face/recognize`
-- `POST /manipulation/pick`
-- `POST /mission/pick_object`
-
-See [docs/capability_stack.md](docs/capability_stack.md) for the full contract and the "reach for the table and take the green apple" pipeline. The manipulation path is now pose-aware: perception can return a grasp candidate, and `POST /manipulation/pick` can consume either a raw 3D pose or a precomputed grasp candidate.
 
 ## Testing
 
@@ -269,17 +165,17 @@ curl -X POST http://localhost:8765/move -H 'Content-Type: application/json' -d '
 curl -X POST http://localhost:8765/stop
 ```
 
-## Planning
+## Roadmap
 
+| Task                                | Status       | Description                                            |
+| ----------------------------------- | ------------ | ------------------------------------------------------ |
+| **Task 1 — OpenClaw + WBC**         | **Done**     | Voice -> locomotion pipeline via shared bridge          |
+| **Task 2 — SLAM/LiDAR Navigation**  | Scaffolded   | 3D localization built (FAST-LIO + Open3D), not yet connected |
+| **Task 3 — VLA + Navigation + WBC** | Planned      | Perception, manipulation, VLA integration               |
 
-| Task                                | Scope  | Description                                                                                              |
-| ----------------------------------- | ------ | -------------------------------------------------------------------------------------------------------- |
-| **Task 1 — OpenClaw + WBC**         | MVP    | Voice → locomotion pipeline via shared bridge                                                            |
-| **Task 2 — SLAM/LiDAR Navigation**  | Tier 2 | Saved-map navigation stack scaffolded; real SLAM/nav adapters still to be wired                          |
-| **Task 3 — VLA + Navigation + WBC** | Tier 3 | Perception/manipulation orchestration scaffolded; real vision and arm control adapters still to be wired |
+See [docs/README_future.md](docs/README_future.md) for details on planned features.
 
-
-**Future: GEAR-SONIC integration** — The repo includes NVIDIA's GEAR-SONIC kinematic planner (`gear_sonic_deploy/`) with 27 motion modes (walk, run, squat, crawl, box, dance, zombie walk, etc.). This C++/TensorRT stack accepts commands via ZMQ and could replace or complement the Decoupled WBC for expressive locomotion demos.
+![Full framework vision](docs/images/system_overview.png)
 
 ## Project Structure
 
@@ -288,9 +184,8 @@ OpenHumanoid/
 ├── bridge/              # Bridge server (run_with_bridge.py for Docker, mock for host)
 ├── realtime/            # Fast mode: OpenAI Realtime API voice client
 ├── openclaw/            # Full mode: OpenClaw Gateway config, skills, workspace
-├── capabilities/         # Prototype autonomy control plane (navigation/perception/manipulation)
-├── scripts/             # Launch and utility scripts (start_bridge.sh, launch.sh)
-├── docs/                # Architecture docs and planning assets
+├── scripts/             # Launch and utility scripts
+├── docs/                # Architecture docs, planning assets, roadmap
 ├── GR00T-WholeBodyControl/  # NVIDIA WBC repo (gitignored, clone separately)
 ├── CONTEXT.md           # AI-readable project context
 ├── .env.example         # Environment variable template
@@ -300,9 +195,8 @@ OpenHumanoid/
 ## Documentation
 
 - [Architecture & Data Flow](docs/architecture.md)
-- [Capability Stack](docs/capability_stack.md)
+- [Planned Features & Roadmap](docs/README_future.md)
 - [AI Context](CONTEXT.md)
-- [Planning Image](docs/planning.png)
 
 ## License
 

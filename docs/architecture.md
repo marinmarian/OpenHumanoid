@@ -83,18 +83,7 @@ OpenClaw → TTS-1 → voice reply (auto-TTS)
 - **Talk Mode** — voice input/output via the WebChat microphone
 - **WhatsApp** — send commands from your phone (requires `openclaw channels login --channel whatsapp`)
 
-The OpenClaw agent uses the `robot_control` skill for direct locomotion and the `navigation_stack`, `perception_stack`, and `manipulation_stack` skills for autonomous tasks. Those skills call the local capability stack server, which persists maps and sequences perception, navigation, and manipulation.
-
-## Capability Stack (prototype)
-
-A new local capability server (`capabilities/server.py`) exposes the higher-level APIs that OpenClaw should use for autonomous work:
-
-- saved-map lifecycle: build, load, localize
-- navigation goals against persistent map landmarks
-- perception queries for objects, scenes, and faces
-- manipulation and a combined pick-object task
-
-This stack is intentionally map-based: build the map once, then load it and localize against it during later runs. The current implementation is a control-plane scaffold with persistent state and task sequencing; its sensing, SLAM, planning, and grasp execution internals are still mock-backed.
+The OpenClaw agent uses the `robot_control` skill for direct locomotion.
 
 ## Bridge Server
 
@@ -121,10 +110,7 @@ Other endpoints (`/activate`, `/deactivate`, `/key`) still publish keyboard even
 | POST | `/activate` | — | Activate walking policy (key `]`) |
 | POST | `/deactivate` | — | Deactivate policy (key `o`) |
 | POST | `/key` | `{"key": "9"}` | Publish arbitrary key |
-| POST | `/arm/pose` | `{"active_arm":"right","wrist_pose":[...]}` | Move wrist via IK solver |
-| POST | `/hand/command` | `{"active_arm":"right","posture":"grasp"}` | Open/close hand |
-| POST | `/manipulation/pick_sequence` | `{pregrasp/grasp/retreat poses}` | Staged pick pipeline |
-| GET | `/status` | — | Current velocity, policy state, endpoint readiness |
+| GET | `/status` | — | Current velocity, policy state |
 
 ### Available Keys (via `/key` endpoint)
 
@@ -157,26 +143,9 @@ Other endpoints (`/activate`, `/deactivate`, `/key`) still publish keyboard even
 
 Calibrated values are empirically measured ground speeds used for distance-based ("walk 2 meters") and angle-based ("turn 90 degrees") duration calculations. The commanded velocity is set directly on `policy.cmd` — any float value is valid, not just these presets.
 
-## Future: GEAR-SONIC
+## Planned Features
 
-The GR00T-WholeBodyControl repo also contains **GEAR-SONIC** (`gear_sonic_deploy/`), a C++/TensorRT kinematic planner with 27 motion modes:
-
-| Category | Modes |
-|----------|-------|
-| Locomotion | idle, slowWalk, walk, run |
-| Ground | squat, kneelTwoLeg, kneelOneLeg, lyingFacedown, handCrawling, elbowCrawling |
-| Boxing | idleBoxing, walkBoxing, leftJab, rightJab, randomPunches, leftHook, rightHook |
-| Styled walks | happy, stealth, injured, careful, objectCarrying, crouch, happyDance, zombie, point, scared |
-
-GEAR-SONIC accepts commands via a ZMQ interface (`mode`, `movement_direction`, `facing_direction`, `speed`, `height`). It cannot run simultaneously with the Decoupled WBC (both write motor commands), but could serve as an alternative locomotion backend for expressive demos.
-
-## Future Tasks
-
-| Task | Integration Point | What to Add |
-|------|-------------------|-------------|
-| Task 2 (SLAM/LiDAR Nav) | Capability stack + `navigation_stack` skill | Saved-map control plane is scaffolded; real SLAM/nav adapters still needed |
-| Task 3 (VLA + Nav + WBC) | Capability stack + `perception_stack` + `manipulation_stack` | Orchestration is scaffolded; real vision and grasp backends still needed |
-| GEAR-SONIC | Alternative bridge backend | ZMQ publisher, mode mapping |
+See [README_future.md](README_future.md) for navigation, perception, manipulation, VLA, GEAR-SONIC, and the capability stack roadmap.
 
 ## Configuration
 
@@ -185,5 +154,4 @@ GEAR-SONIC accepts commands via a ZMQ interface (`mode`, `movement_direction`, `
 | `VOICE_MODE` | `realtime` | `realtime` or `openclaw` |
 | `OPENAI_API_KEY` | (required) | Used by both modes |
 | `BRIDGE_URL` | `http://localhost:8765` | Bridge server address |
-| `CAPABILITY_SERVER_URL` | `http://localhost:8787` | Local capability stack address |
 | `LOG_LEVEL` | `INFO` | Logging verbosity |
