@@ -2,6 +2,8 @@
 
 Open-source agentic AI framework for voice-controlled humanoid robots. Currently running **voice-driven locomotion** on the **Unitree G1** via **OpenClaw** and **GR00T Whole-Body Control**.
 
+Built during **HACK2026 Hackathon**, organized by the ETH Robotics Club.
+
 ![Current status: what's built and what's planned](docs/images/pitch_overview.png)
 
 ## How It Works
@@ -197,6 +199,15 @@ OpenHumanoid/
 - [Architecture & Data Flow](docs/architecture.md)
 - [Planned Features & Roadmap](docs/README_future.md)
 - [AI Context](CONTEXT.md)
+
+## Team
+
+- [@alexzh3](https://github.com/alexzh3)
+- [@Kotochleb](https://github.com/Kotochleb)
+- [@RoksolanaMazurak](https://github.com/RoksolanaMazurak)
+- [@RybOlya](https://github.com/RybOlya)
+- [@Simoneutili](https://github.com/Simoneutili)
+- [@VictoriaStarynchuk](https://github.com/VictoriaStarynchuk)
 
 ## License
 
