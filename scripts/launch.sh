@@ -29,8 +29,9 @@ if curl -sf "$BRIDGE_URL/status" > /dev/null 2>&1; then
 else
     echo "WARNING: Bridge not reachable at $BRIDGE_URL"
     echo "Start it first:"
-    echo "  Mock:   uv run python bridge/mock_bridge.py"
-    echo "  Docker: ./scripts/start_bridge.sh"
+    echo "  Mock:    uv run python bridge/mock_bridge.py"
+    echo "  Docker:  ./scripts/start_bridge.sh"
+    echo "  Jetson:  ssh unitree@192.168.123.164 'cd ~/robot-openhumanoid && ./scripts/start.sh'"
     echo ""
     read -p "Continue anyway? [y/N] " -n 1 -r
     echo

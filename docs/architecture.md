@@ -125,6 +125,10 @@ Other endpoints (`/activate`, `/deactivate`, `/key`) still publish keyboard even
 
 ## Deployment
 
+### Local (default)
+
+Bridge + WBC run in Docker on the laptop, voice client also on the laptop. The robot is connected via Ethernet.
+
 | Location | Component | Port |
 |----------|-----------|------|
 | Docker container | `run_with_bridge.py` (bridge + WBC, single process) | 8765 |
@@ -132,6 +136,53 @@ Other endpoints (`/activate`, `/deactivate`, `/key`) still publish keyboard even
 | Host | OpenClaw Gateway (full mode) | 18789 |
 | Cloud | OpenAI Realtime API / TTS-1 | 443 |
 | Network | G1 Robot | Unitree SDK (192.168.123.x) |
+
+### Hybrid (recommended for real robot)
+
+Bridge + WBC run natively on the robot's Jetson Orin NX. Voice client stays on the laptop and talks to the bridge over WiFi. Motor commands are local to the robot — no Ethernet round-trip.
+
+```
+┌──────────────────────────────────────────┐
+│ LAPTOP                                    │
+│                                           │
+│  ┌─────────────────┐  ┌───────────────┐  │
+│  │ Fast Mode       │  │ Full Mode     │  │
+│  │ (realtime/)     │  │ (openclaw/)   │  │
+│  └────────┬────────┘  └───────┬───────┘  │
+│           └────────┬──────────┘           │
+│                    │ HTTP over WiFi       │
+└────────────────────┼─────────────────────┘
+                     │
+        ┌────────────▼────────────────────────────────┐
+        │ ROBOT (Jetson Orin NX, 192.168.123.164)      │
+        │                                              │
+        │  run_with_bridge.py (native, no Docker)      │
+        │  ┌──────────────────┐  ┌──────────────────┐ │
+        │  │ HTTP Bridge      │  │ WBC Control Loop  │ │
+        │  │ :8765            │─▶│ G1GearWbcPolicy   │ │
+        │  └──────────────────┘  └────────┬─────────┘ │
+        │                                 │ DDS local  │
+        │                        ┌────────▼─────────┐ │
+        │                        │ Motor Control     │ │
+        │                        │ (internal board)  │ │
+        │                        └──────────────────┘ │
+        └──────────────────────────────────────────────┘
+                     │
+              ┌──────▼───────┐
+              │ OpenAI Cloud │
+              │ (via laptop) │
+              └──────────────┘
+```
+
+| Location | Component | Port |
+|----------|-----------|------|
+| Jetson Orin NX | `run_with_bridge.py` (bridge + WBC, native) | 8765 |
+| Laptop | Realtime API client / OpenClaw | — / 18789 |
+| Cloud | OpenAI Realtime API / TTS-1 | 443 |
+
+Setup: see [robot-openhumanoid](https://github.com/marinmarian/robot-openhumanoid) — `scripts/setup.sh` (one-time), `scripts/start.sh` (launch).
+
+The voice client on the laptop uses `BRIDGE_URL=http://192.168.123.164:8765` and includes connection pooling with automatic retry for WiFi resilience.
 
 ## Speed Reference
 
@@ -153,5 +204,7 @@ See [README_future.md](README_future.md) for navigation, perception, manipulatio
 |----------|---------|-------------|
 | `VOICE_MODE` | `realtime` | `realtime` or `openclaw` |
 | `OPENAI_API_KEY` | (required) | Used by both modes |
-| `BRIDGE_URL` | `http://localhost:8765` | Bridge server address |
+| `BRIDGE_URL` | `http://localhost:8765` | Bridge server address (`http://192.168.123.164:8765` for hybrid) |
+| `BRIDGE_TIMEOUT` | `2` | HTTP timeout for bridge requests (seconds) |
+| `BRIDGE_RETRIES` | `2` | Retry count for failed bridge requests |
 | `LOG_LEVEL` | `INFO` | Logging verbosity |

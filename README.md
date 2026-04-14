@@ -2,11 +2,11 @@
 
 Open-source agentic AI framework for voice-controlled humanoid robots. Currently running **voice-driven locomotion** on the **Unitree G1** via **OpenClaw** and **GR00T Whole-Body Control**.
 
-Built during **HACK2026 Hackathon**, organized by the ETH Robotics Club and won the 2nd place.
+> Fork of [alexzh3/OpenHumanoid](https://github.com/alexzh3/OpenHumanoid) — built during **HACK2026 Hackathon** (ETH Robotics Club, 2nd place). This fork adds **hybrid deployment** (WBC on Jetson, voice client on laptop), WiFi-resilient networking, and numpy-safe bridge responses.
 
 ![Current status: what's built and what's planned](docs/images/pitch_overview.png)
 
-## Hackathon Team
+## Original Hackathon Team
 
 - [@alexzh3](https://github.com/alexzh3)
 - [@Kotochleb](https://github.com/Kotochleb)
@@ -41,7 +41,7 @@ See [docs/architecture.md](docs/architecture.md) for the full architecture and d
 
 ```bash
 sudo apt-get install -y libportaudio2
-git clone git@github.com:alexzh3/OpenHumanoid.git
+git clone git@github.com:marinmarian/OpenHumanoid.git
 cd OpenHumanoid
 uv sync
 ```
@@ -176,6 +176,47 @@ curl -X POST http://localhost:8765/move -H 'Content-Type: application/json' -d '
 curl -X POST http://localhost:8765/stop
 ```
 
+## Hybrid Deployment (Jetson Orin NX)
+
+Run the bridge + WBC directly on the robot's onboard Jetson Orin NX, while keeping the voice client on your laptop. Motor commands execute locally on the robot — no Ethernet round-trip.
+
+```
+Laptop (WiFi)                         Robot (Jetson Orin NX)
+┌──────────────────┐                  ┌──────────────────────────┐
+│ Voice Client     │── HTTP/WiFi ──→  │ Bridge + WBC  :8765      │
+│ (mic, speaker)   │                  │ (direct motor control)   │
+└──────────────────┘                  └──────────────────────────┘
+```
+
+The Jetson-side code lives in a separate, lightweight repo: **[robot-openhumanoid](https://github.com/marinmarian/robot-openhumanoid)**. It contains only the bridge server, launch script, and setup script — no voice client or OpenClaw.
+
+### One-time Jetson setup
+
+```bash
+ssh unitree@192.168.123.164    # password: 123
+git clone https://github.com/marinmarian/robot-openhumanoid.git
+cd robot-openhumanoid
+bash scripts/setup.sh
+```
+
+This installs GR00T-WholeBodyControl, creates a conda `wbc` environment (Python 3.10), installs ROS2 Humble via RoboStack, and all WBC dependencies.
+
+### Launch
+
+```bash
+# Terminal 1 — on the robot (SSH)
+ssh unitree@192.168.123.164
+cd ~/robot-openhumanoid && ./scripts/start.sh
+
+# Terminal 2 — on your laptop
+cd OpenHumanoid
+uv run python -m realtime.main
+```
+
+Set `BRIDGE_URL=http://192.168.123.164:8765` in your `.env` (already done if you cloned this fork).
+
+Verify: `curl -s http://192.168.123.164:8765/status | python3 -m json.tool`
+
 ## Roadmap
 
 | Task                                | Status       | Description                                            |
@@ -188,10 +229,17 @@ See [docs/README_future.md](docs/README_future.md) for details on planned featur
 
 ![Full framework vision](docs/images/system_overview.png)
 
+## What's Changed in This Fork
+
+- **Hybrid deployment**: WBC runs natively on the Jetson Orin NX, voice client stays on the laptop. Separate repo: [robot-openhumanoid](https://github.com/marinmarian/robot-openhumanoid)
+- **WiFi-resilient voice client**: HTTP connection pooling, automatic retries, and WebSocket reconnect with exponential backoff (`realtime/client.py`)
+- **Bridge fixes**: `Content-Length` header for HTTP/1.0 responses, numpy-aware JSON serializer for WBC policy values
+- **Configurable timeouts**: `BRIDGE_TIMEOUT` and `BRIDGE_RETRIES` environment variables for tuning over unreliable networks
+
 ## Project Structure
 
 ```
-OpenHumanoid/
+OpenHumanoid/                          (this repo — laptop side)
 ├── bridge/              # Bridge server (run_with_bridge.py for Docker, mock for host)
 ├── realtime/            # Fast mode: OpenAI Realtime API voice client
 ├── openclaw/            # Full mode: OpenClaw Gateway config, skills, workspace
@@ -201,6 +249,11 @@ OpenHumanoid/
 ├── CONTEXT.md           # AI-readable project context
 ├── .env.example         # Environment variable template
 └── pyproject.toml       # Python dependencies (uv sync)
+
+robot-openhumanoid/                    (separate repo — Jetson side)
+├── bridge/run_with_bridge.py   # Bridge + WBC control loop
+├── scripts/setup.sh            # One-time Jetson setup (conda, ROS2, deps)
+└── scripts/start.sh            # Launch script
 ```
 
 ## Documentation

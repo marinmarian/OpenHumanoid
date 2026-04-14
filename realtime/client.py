@@ -13,6 +13,8 @@ import logging
 
 import websockets
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 import math
 from .tools import TOOL_DEFINITIONS, SYSTEM_INSTRUCTIONS, SPEED_MAP, ACTUAL_SPEED, ACTUAL_YAW_SPEED, resolve_move, resolve_turn
@@ -21,6 +23,30 @@ from .audio import AudioInput, AudioOutput
 logger = logging.getLogger(__name__)
 
 REALTIME_URL = "wss://api.openai.com/v1/realtime?model=gpt-realtime"
+
+BRIDGE_TIMEOUT = float(os.environ.get("BRIDGE_TIMEOUT", "2"))
+BRIDGE_RETRIES = int(os.environ.get("BRIDGE_RETRIES", "2"))
+WS_RECONNECT_DELAY_BASE = 1.0
+WS_RECONNECT_DELAY_MAX = 16.0
+
+
+def _make_bridge_session(retries: int = BRIDGE_RETRIES) -> requests.Session:
+    """Create a requests.Session with connection pooling and retry."""
+    session = requests.Session()
+    retry_strategy = Retry(
+        total=retries,
+        backoff_factor=0.1,
+        status_forcelist=[502, 503, 504],
+        allowed_methods=["POST", "GET"],
+    )
+    adapter = HTTPAdapter(
+        max_retries=retry_strategy,
+        pool_connections=1,
+        pool_maxsize=4,
+    )
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
 
 
 class RealtimeClient:
@@ -32,6 +58,7 @@ class RealtimeClient:
 
         self.audio_in = AudioInput()
         self.audio_out = AudioOutput()
+        self._bridge = _make_bridge_session()
         self.ws = None
         self._running = False
         self._response_active = False
@@ -39,36 +66,47 @@ class RealtimeClient:
         self._unmute_after = 0.0
 
     async def run(self):
-        """Main entry point. Connects and runs the voice loop."""
+        """Main entry point. Connects with auto-reconnect and runs the voice loop."""
         self._running = True
         self.audio_in.start()
         self.audio_out.start()
 
-        headers = {"Authorization": f"Bearer {self.api_key}"}
-
+        delay = WS_RECONNECT_DELAY_BASE
         try:
-            async with websockets.connect(
-                REALTIME_URL,
-                additional_headers=headers,
-                max_size=None,
-            ) as ws:
-                self.ws = ws
-                logger.info("Connected to Realtime API")
-
-                await self._configure_session()
-
-                audio_task = asyncio.create_task(self._stream_audio())
-                receive_task = asyncio.create_task(self._receive_events())
-
-                await asyncio.gather(audio_task, receive_task)
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.error(f"Connection error: {e}")
+            while self._running:
+                try:
+                    await self._connect_and_run()
+                    break
+                except (websockets.ConnectionClosed, ConnectionError, OSError) as e:
+                    logger.warning(f"WebSocket disconnected: {e}. Reconnecting in {delay:.0f}s...")
+                    await asyncio.sleep(delay)
+                    delay = min(delay * 2, WS_RECONNECT_DELAY_MAX)
+                except asyncio.CancelledError:
+                    break
         finally:
             self._running = False
             self.audio_in.stop()
             self.audio_out.stop()
+            self._bridge.close()
+
+    async def _connect_and_run(self):
+        """Single connection attempt — extracted for reconnect loop."""
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+
+        async with websockets.connect(
+            REALTIME_URL,
+            additional_headers=headers,
+            max_size=None,
+        ) as ws:
+            self.ws = ws
+            logger.info("Connected to Realtime API")
+
+            await self._configure_session()
+
+            audio_task = asyncio.create_task(self._stream_audio())
+            receive_task = asyncio.create_task(self._receive_events())
+
+            await asyncio.gather(audio_task, receive_task)
 
     async def _configure_session(self):
         """Send session.update to configure tools, instructions, and VAD."""
@@ -222,50 +260,43 @@ class RealtimeClient:
             return float(args["distance_meters"]) / speed
         return None
 
+    async def _bridge_post(self, path: str, json_body: dict | None = None) -> requests.Response:
+        """POST to the bridge with connection reuse and retry."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: self._bridge.post(
+                f"{self.bridge_url}{path}", json=json_body, timeout=BRIDGE_TIMEOUT,
+            ),
+        )
+
     async def _execute_function(self, name: str, args: dict) -> tuple[dict, float | None]:
         """Execute a function call. Returns (result, wait_time_seconds)."""
-        loop = asyncio.get_event_loop()
-
         try:
             if name == "move_robot":
                 payload = resolve_move(args.get("direction", "forward"), args.get("speed", "medium"))
-                resp = await loop.run_in_executor(
-                    None,
-                    lambda: requests.post(f"{self.bridge_url}/move", json=payload, timeout=2),
-                )
+                resp = await self._bridge_post("/move", payload)
                 duration = self._resolve_duration(args)
                 logger.info(f"MOVE {payload} duration={duration}")
                 return resp.json(), duration
 
             elif name == "stop_robot":
-                resp = await loop.run_in_executor(
-                    None,
-                    lambda: requests.post(f"{self.bridge_url}/stop", timeout=2),
-                )
+                resp = await self._bridge_post("/stop")
                 return resp.json(), None
 
             elif name == "activate_robot":
-                resp = await loop.run_in_executor(
-                    None,
-                    lambda: requests.post(f"{self.bridge_url}/activate", json={}, timeout=2),
-                )
+                resp = await self._bridge_post("/activate", {})
                 logger.info("ACTIVATE policy")
                 return resp.json(), None
 
             elif name == "release_robot":
-                resp = await loop.run_in_executor(
-                    None,
-                    lambda: requests.post(f"{self.bridge_url}/key", json={"key": "9"}, timeout=2),
-                )
+                resp = await self._bridge_post("/key", {"key": "9"})
                 logger.info("RELEASE/HOLD toggle (key 9)")
                 return resp.json(), None
 
             elif name == "turn_robot":
                 payload = resolve_turn(args.get("direction", "left"), args.get("speed", "medium"))
-                resp = await loop.run_in_executor(
-                    None,
-                    lambda: requests.post(f"{self.bridge_url}/move", json=payload, timeout=2),
-                )
+                resp = await self._bridge_post("/move", payload)
                 duration = self._resolve_turn_duration(args)
                 logger.info(f"TURN {payload} duration={duration} angle={args.get('angle_degrees')}")
                 return resp.json(), duration
@@ -279,12 +310,8 @@ class RealtimeClient:
 
     async def _send_stop(self):
         """Send a stop command to the bridge."""
-        loop = asyncio.get_event_loop()
         try:
-            await loop.run_in_executor(
-                None,
-                lambda: requests.post(f"{self.bridge_url}/stop", timeout=2),
-            )
+            await self._bridge_post("/stop")
             logger.info("Auto-stopped")
         except requests.RequestException:
             pass
