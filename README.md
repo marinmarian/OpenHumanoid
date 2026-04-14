@@ -43,6 +43,7 @@ This installs GR00T-WholeBodyControl, creates a conda `wbc` environment (Python 
 ```bash
 # Terminal 1 — on the robot (SSH)
 ssh unitree@192.168.123.164
+conda activate wbc
 cd ~/robot-openhumanoid && ./scripts/start.sh
 
 # Terminal 2 — on your laptop
