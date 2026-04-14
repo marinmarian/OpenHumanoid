@@ -30,7 +30,6 @@ The Jetson-side code lives in a separate, lightweight repo: **[robot-openhumanoi
 ### One-time Jetson setup
 
 ```bash
-ssh unitree@192.168.123.164    # password: 123
 git clone https://github.com/marinmarian/robot-openhumanoid.git
 cd robot-openhumanoid
 bash scripts/setup.sh
@@ -42,7 +41,6 @@ This installs GR00T-WholeBodyControl, creates a conda `wbc` environment (Python 
 
 ```bash
 # Terminal 1 — on the robot (SSH)
-ssh unitree@192.168.123.164
 conda activate wbc
 cd ~/robot-openhumanoid && ./scripts/start.sh
 
