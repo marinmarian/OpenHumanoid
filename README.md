@@ -4,7 +4,7 @@ Open-source agentic AI framework for voice-controlled humanoid robots. Currently
 
 > Fork of [alexzh3/OpenHumanoid](https://github.com/alexzh3/OpenHumanoid) — built during **HACK2026 Hackathon** (ETH Robotics Club, 2nd place). This fork adds **hybrid deployment** (WBC on Jetson, voice client on laptop), WiFi-resilient networking, and numpy-safe bridge responses.
 
-Current status: what's built and what's planned
+![Current status: what's built and what's planned](docs/images/pitch_overview.png)
 
 ## What's Changed in This Fork
 
@@ -43,7 +43,6 @@ This installs GR00T-WholeBodyControl, creates a conda `wbc` environment (Python 
 ```bash
 # Terminal 1 — on the robot (SSH)
 ssh unitree@192.168.123.164
-conda activate wbc
 cd ~/robot-openhumanoid && ./scripts/start.sh
 
 # Terminal 2 — on your laptop
@@ -70,12 +69,10 @@ Verify: `curl -s http://192.168.123.164:8765/status | python3 -m json.tool`
 
 Two switchable voice-control modes, both sharing a single HTTP bridge to the robot:
 
-
 | Mode                             | Latency | Input                              | Capabilities                                             |
 | -------------------------------- | ------- | ---------------------------------- | -------------------------------------------------------- |
 | **Fast** (`VOICE_MODE=realtime`) | ~500ms  | Voice (Realtime API)               | Locomotion: walk, turn, stop, distance/timed/sequential  |
-| **Full** (`VOICE_MODE=openclaw`) | ~2-5s   | Voice + Text + WhatsApp (OpenClaw) | Locomotion with personality (Theo), multi-channel access |
-
+| **Full** (`VOICE_MODE=openclaw`) | ~2-5s   | Voice + Text + WhatsApp (OpenClaw) | Locomotion with personality (Theo), multi-channel access  |
 
 See [docs/architecture.md](docs/architecture.md) for the full architecture and data flow.
 
@@ -197,7 +194,6 @@ Velocities are written directly to the WBC neural network policy — any float v
 
 ### Locomotion
 
-
 | Method | Endpoint      | Example                                                                                                              | Description                                                        |
 | ------ | ------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | POST   | `/move`       | `curl -s -X POST http://localhost:8765/move -H 'Content-Type: application/json' -d '{"vx":0.4,"vy":0.0,"vyaw":0.0}'` | Set velocity `[vx, vy, vyaw]` directly on `policy.cmd`             |
@@ -206,16 +202,13 @@ Velocities are written directly to the WBC neural network policy — any float v
 | POST   | `/deactivate` | `curl -s -X POST http://localhost:8765/deactivate`                                                                   | Deactivate policy                                                  |
 | POST   | `/key`        | `curl -s -X POST http://localhost:8765/key -H 'Content-Type: application/json' -d '{"key":"9"}'`                     | Send a raw key event (`9`=release/hold, `1`/`2`=base height, etc.) |
 
-
 Speed reference: slow=0.2, medium=0.4, fast=0.6 m/s.
 
 ### Status
 
-
-| Method | Endpoint  | Description                                                                |
-| ------ | --------- | -------------------------------------------------------------------------- |
+| Method | Endpoint  | Description                                                              |
+| ------ | --------- | ------------------------------------------------------------------------ |
 | GET    | `/status` | Returns current velocity, actual `policy.cmd`, and `policy_connected` flag |
-
 
 ```bash
 curl -s http://localhost:8765/status | python3 -m json.tool
@@ -235,17 +228,15 @@ curl -X POST http://localhost:8765/stop
 
 ## Roadmap
 
-
-| Task                                | Status     | Description                                                  |
-| ----------------------------------- | ---------- | ------------------------------------------------------------ |
-| **Task 1 — OpenClaw + WBC**         | **Done**   | Voice -> locomotion pipeline via shared bridge               |
-| **Task 2 — SLAM/LiDAR Navigation**  | Scaffolded | 3D localization built (FAST-LIO + Open3D), not yet connected |
-| **Task 3 — VLA + Navigation + WBC** | Planned    | Perception, manipulation, VLA integration                    |
-
+| Task                                | Status       | Description                                            |
+| ----------------------------------- | ------------ | ------------------------------------------------------ |
+| **Task 1 — OpenClaw + WBC**         | **Done**     | Voice -> locomotion pipeline via shared bridge          |
+| **Task 2 — SLAM/LiDAR Navigation**  | Scaffolded   | 3D localization built (FAST-LIO + Open3D), not yet connected |
+| **Task 3 — VLA + Navigation + WBC** | Planned      | Perception, manipulation, VLA integration               |
 
 See [docs/README_future.md](docs/README_future.md) for details on planned features.
 
-Full framework vision
+![Full framework vision](docs/images/system_overview.png)
 
 ## Project Structure
 
